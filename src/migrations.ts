@@ -211,8 +211,18 @@ export const MIGRATIONS: readonly Migration[] = [
           (is_bot = false and personality is null) or
           (is_bot = true and personality in ('farmer','hermit','trader','raider','nomad'))
         ),
-        -- A bot has no account; a human always has one. The ancestor allowed either on either.
-        constraint players_bot_has_no_user check ((is_bot = true) = (user_id is null)),
+        -- A BOT has no account. Stated one-directionally on purpose.
+        --
+        -- The obvious form is "(is_bot = true) = (user_id is null)" — a bot has no account AND a
+        -- human always has one — and it is wrong, because it makes GDPR erasure impossible. The
+        -- identity.user.deleted handler does not delete the survivor: a world's history
+        -- is other players' history too, so the row stays and the LINK to the account goes. That
+        -- leaves a legitimate human with a null user_id, which the two-directional form refuses.
+        -- Caught by the erasure test, which is what tests of a rule are for.
+        --
+        -- The hazard actually worth constraining is the other direction: a bot carrying a user_id
+        -- would post its achievements to a real person's profile.
+        constraint players_bot_has_no_user check (not (is_bot = true and user_id is not null)),
         constraint players_vitals_bounded check (hp between 0 and 100 and morale between 0 and 100),
         constraint players_defense_non_negative check (defense >= 0),
         constraint players_ap_sane check (ap_per_day between 0 and 6),

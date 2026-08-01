@@ -103,6 +103,26 @@ export class ConflictError extends Error {
   }
 }
 
+/**
+ * Thrown inside the join transaction when the unique index on `(world_id, user_id)` refused our
+ * insert because another request for the same account got there first.
+ *
+ * It exists to ROLL THE TRANSACTION BACK, and that is the whole of its job. Returning a sentinel
+ * VALUE from inside `sql.begin` does not roll anything back — the transaction commits, and the tile
+ * claimed a few statements earlier stays marked `homestead` and owned by a player that was never
+ * created. `releaseHomestead` matches on `owner_id`, so nothing ever gives that tile back, and the
+ * map leaks a homestead per lost race. That is the exact defect the ancestor's own comment
+ * (`routes/worlds.ts:42-48`) describes, and this port re-introduced it by returning `null`; the
+ * test named "a lost join race leaves no tile owned by a survivor that was never created" is what
+ * caught it. Caught immediately outside the transaction, so it never reaches the error handler.
+ */
+class JoinRaceLost extends Error {
+  constructor() {
+    super('lost the (world_id, user_id) race');
+    this.name = 'JoinRaceLost';
+  }
+}
+
 /** The map is full. Distinct because it is an operator's problem, not the player's. */
 export class NoFreeHomesteadError extends Error {
   constructor(worldId: string) {
@@ -387,8 +407,10 @@ export async function joinWorld(
   if (w.status === 'archived') throw new ConflictError('world is archived');
 
   const id = randomUUID();
-  const created = await withOutbox(sql, producer, async (tx, emit) => {
-    const home = await claimHomestead(tx, input.worldId, id);
+  let created: PlayerRow | null = null;
+  try {
+    created = await withOutbox(sql, producer, async (tx, emit) => {
+      const home = await claimHomestead(tx, input.worldId, id);
     const [row] = await tx<PlayerRow[]>`
       insert into players (id, world_id, user_id, handle, is_bot, personality,
                            homestead_x, homestead_y, resources, hp, morale, defense, reputation,
@@ -403,19 +425,23 @@ export async function joinWorld(
       on conflict do nothing
       returning *
     `;
-    if (!row) return null; // lost the (world_id, user_id) race
-    await tx`
+      // THROW, never return. See JoinRaceLost: a returned sentinel commits the tile claim.
+      if (!row) throw new JoinRaceLost();
+      await tx`
       insert into player_progress (player_id, world_id) values (${id}, ${input.worldId})
       on conflict (player_id) do nothing`;
-    emit({
-      topic: 'nda.player.settled',
-      key: id,
-      payload: { worldId: input.worldId, playerId: id, userId: input.userId, day: w.day },
-      actor: `user:${input.userId}`,
-      ...(input.correlationId ? { correlationId: input.correlationId } : {}),
+      emit({
+        topic: 'nda.player.settled',
+        key: id,
+        payload: { worldId: input.worldId, playerId: id, userId: input.userId, day: w.day },
+        actor: `user:${input.userId}`,
+        ...(input.correlationId ? { correlationId: input.correlationId } : {}),
+      });
+      return row;
     });
-    return row;
-  });
+  } catch (err) {
+    if (!(err instanceof JoinRaceLost)) throw err;
+  }
 
   if (created) return { player: created, created: true };
 

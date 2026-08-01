@@ -131,7 +131,7 @@ test('migrations: hp and morale are bounded to the range the engine clamps to', 
   );
 });
 
-test('migrations: a bot has no account and a human always has one', { skip }, async () => {
+test('migrations: a bot has no account, but an erased human legitimately has none either', { skip }, async () => {
   const w = await aWorld();
   await assert.rejects(
     () => sql`
@@ -140,12 +140,12 @@ test('migrations: a bot has no account and a human always has one', { skip }, as
     /players_bot_has_no_user/,
     'a bot carrying a user id would post achievements to a real account',
   );
-  await assert.rejects(
-    () => sql`
-      insert into players (id, world_id, user_id, handle, is_bot, homestead_x, homestead_y, resources)
-      values ('ph', ${w}, null, 'h', false, 0, 0, '{}'::jsonb)`,
-    /players_bot_has_no_user/,
-  );
+  // The other direction is deliberately ALLOWED: an erased account leaves a human survivor with no
+  // user_id, because `identity.user.deleted` removes the link and keeps the world's history. A
+  // two-directional constraint here would make GDPR erasure impossible. See migrations.ts.
+  await sql`
+    insert into players (id, world_id, user_id, handle, is_bot, homestead_x, homestead_y, resources)
+    values ('ph', ${w}, null, 'h', false, 0, 0, '{}'::jsonb)`;
 });
 
 test('migrations: a non-bot cannot carry a bot personality', { skip }, async () => {

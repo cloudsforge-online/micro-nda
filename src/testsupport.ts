@@ -19,7 +19,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import postgres from 'postgres';
 import { migrate, type Sql as DbSql } from '@cloudsforge/db';
-import { Logger, Metrics } from '@cloudsforge/telemetry';
+import { Logger, Metrics, registerHttpMetrics, registerJobMetrics } from '@cloudsforge/telemetry';
 import { MIGRATIONS, TABLES } from './migrations.ts';
 import { registerServiceMetrics } from './server.ts';
 import type { EntitlementReader, EntitlementWire } from './billingclient.ts';
@@ -193,8 +193,9 @@ export function quietLogger(): Logger {
   return new Logger({ service: 'nda-test', sink: () => {} });
 }
 
+/** Registered exactly as `index.ts` registers them, so a test scrapes what production scrapes. */
 export function testMetrics(): Metrics {
-  return registerServiceMetrics(new Metrics());
+  return registerServiceMetrics(registerJobMetrics(registerHttpMetrics(new Metrics())));
 }
 
 export function asDb(sql: postgres.Sql): Db {
