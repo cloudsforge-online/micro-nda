@@ -1,0 +1,221 @@
+name: CI
+
+# The cross-cutting rules live in the shared reusable workflow (micro-org/service-ci.yml): one
+# database per service, no cross-service source imports, /livez + /readyz + /metrics, no env_file
+# fan-out, no setInterval doing domain work, and a Postgres container that fails the build if the
+# database suite skipped. Calling it is how this repository counts toward the measured target of
+# zero bespoke CI files (docs/ecosystem/03 §5).
+#
+# What the reusable workflow cannot do here is added below:
+#   - `migrate` exercises the migrator AS a migrator, on an empty database, exactly as a deploy runs
+#     it — and proves it is idempotent, because a deploy re-runs it on every release.
+#   - `rules` asserts, as text, the constraints and guards this service exists to add. The tests
+#     prove they WORK; these prove they are still THERE.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  estate:
+    uses: cloudsforge-online/micro-org/.github/workflows/service-ci.yml@main
+    with:
+      service: nda
+      database-env-var: NDA_DATABASE_URL
+      port: 4110
+      # The image startup smoke test boots the real service, and `env.ts` validates its
+      # configuration at import — so the container needs the variables it declares, not just a
+      # database. CI-only NON-secrets: throwaway tokens that clear a length check, URLs that are
+      # never dialled because /livez needs no upstream. Never a real credential.
+      smoke-env: |
+        IDENTITY_JWKS_URL=http://127.0.0.1:4001/.well-known/jwks.json
+        IDENTITY_ISSUER=http://127.0.0.1:4001
+        OUTBOX_SIGNING_SECRET=ci-only-not-a-real-secret-000000000000
+        BILLING_URL=http://127.0.0.1:4009
+        WORLDS_URL=http://127.0.0.1:4000
+        NDA_SERVICE_TOKEN=ci-only-not-a-real-token-0000000000000
+    secrets:
+      # @cloudsforge/* resolves via link:../runtime, so the workflow checks out micro-runtime as a
+      # sibling — private, hence a contents:read token. micro-contracts is checked out too and is
+      # unused here: this service depends on no contracts package.
+      estate_token: ${{ secrets.ESTATE_READ_TOKEN }}
+    permissions:
+      contents: read
+      packages: read
+
+  migrate:
+    name: The migrator, on an empty database
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        # Not a secret: this database lives for one job, is reachable only from it, and holds nothing.
+        env:
+          POSTGRES_USER: nda
+          POSTGRES_PASSWORD: nda
+          POSTGRES_DB: nda_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U nda"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NDA_DATABASE_URL: postgres://nda:nda@127.0.0.1:5432/nda_test
+      IDENTITY_JWKS_URL: http://127.0.0.1:4001/.well-known/jwks.json
+      IDENTITY_ISSUER: http://127.0.0.1:4001
+      OUTBOX_SIGNING_SECRET: ci-only-not-a-real-secret-000000000000
+      BILLING_URL: http://127.0.0.1:4009
+      WORLDS_URL: http://127.0.0.1:4000
+      NDA_SERVICE_TOKEN: ci-only-not-a-real-token-0000000000000
+    steps:
+      # Temporary: the second checkout exists only because the runtime packages are unpublished.
+      - uses: actions/checkout@v4
+        with: { path: nda }
+      - uses: actions/checkout@v4
+        with: { repository: cloudsforge-online/micro-runtime, path: runtime, token: "${{ secrets.ESTATE_READ_TOKEN }}" }
+      - uses: pnpm/action-setup@v4
+        with: { version: 11.9.0 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: nda/pnpm-lock.yaml
+      # `link:` resolves to the sibling's own node_modules, so the sibling must be installed before
+      # this repository is — without this, `node --import tsx src/migrator.ts` cannot load the
+      # runtime source's own imports (@opentelemetry/api, jose) and dies at the first one.
+      - name: Install the sibling runtime
+        run: pnpm --dir runtime install --frozen-lockfile
+      - name: Install
+        working-directory: nda
+        run: pnpm install --frozen-lockfile
+      - name: Migrate the test database
+        working-directory: nda
+        run: pnpm migrate
+      - name: Migrating twice is a no-op
+        working-directory: nda
+        # A deploy re-runs the one-shot job on every release; a migrator that is not idempotent turns
+        # the second deploy of an unchanged schema into an outage.
+        run: pnpm migrate
+
+  rules:
+    name: The controls this service exists to add
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ────────────────────────────────────────────────────────────────────────────────────────
+      # Every check below reads STRIPPED source — comments removed — for the reason micro-org's
+      # service-ci.yml rule 1 records, and which the first version of this file walked straight
+      # into: a grep over raw source fires on the very comment that EXPLAINS the boundary. The
+      # engine-purity check tripped on "the ancestor stamped randomUUID() on every report", and the
+      # no-ledger check tripped on the test that asserts there is no ledger. A rule that punishes
+      # documenting the rule teaches people to delete the explanation, and the codebase loses
+      # exactly the comments that make a boundary survive a reviewer who was not there.
+      # ────────────────────────────────────────────────────────────────────────────────────────
+      - name: Strip comments, so a rule cannot fire on its own rationale
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/stripped
+          while IFS= read -r f; do
+            mkdir -p "/tmp/stripped/$(dirname "$f")"
+            # Block comments first, then line comments that are not part of a '://' URL.
+            perl -0pe 's{/\*.*?\*/}{}gs' "$f" | perl -pe 's{(^|[^:])//.*$}{$1}' > "/tmp/stripped/$f"
+          done < <(find src -type f -name '*.ts' ! -name '*.test.ts' -print)
+          echo "stripped $(find /tmp/stripped -name '*.ts' | wc -l) non-test sources"
+
+      - name: The constraints that keep one account to one survivor still exist
+        run: |
+          grep -q 'players_world_user_uniq' src/migrations.ts \
+            || { echo '::error::the (world_id, user_id) unique index is gone; two tabs joining at once give one account two survivors'; exit 1; }
+          grep -q 'achievements_player_ach_uniq' src/migrations.ts \
+            || { echo '::error::the achievement unique is gone; a re-evaluating tick can unlock one badge twice'; exit 1; }
+          grep -q 'tiles_world_xy_uniq' src/migrations.ts \
+            || { echo '::error::a world can now hold two tiles at one coordinate'; exit 1; }
+
+      - name: A day resolution still refuses to write a day that has moved
+        # The defence that holds when the job lease does not — an expired lease under a slow
+        # resolution, an operator forcing a tick mid-sweep, a redelivered job. Without it, two
+        # workers resolve one day: double XP and double days-survived (04-domain-model §10.5).
+        run: |
+          grep -q 'for update' /tmp/stripped/src/worlds.ts \
+            || { echo '::error::persistDay no longer locks the world row'; exit 1; }
+          grep -q 'locked.day !== w.day' /tmp/stripped/src/worlds.ts \
+            || { echo '::error::the day re-check is gone; two workers can resolve one day twice'; exit 1; }
+
+      - name: The resolution engine is still pure
+        # No database handle, no clock, no uuid. This is what makes "same seed and same inputs give
+        # a byte-identical resolution" assertable, and what the recorded ancestor corpus replays.
+        run: |
+          set -uo pipefail
+          bad=$(grep -nE "randomUUID|Date\.now|new Date\(|from 'postgres'" /tmp/stripped/src/engine/*.ts || true)
+          bad="$bad$(grep -n 'Math\.random' /tmp/stripped/src/engine/*.ts /tmp/stripped/src/rules.ts || true)"
+          if [ -n "$(printf '%s' "$bad" | tr -d '[:space:]')" ]; then
+            echo '::error::the engine has acquired a clock, a uuid, a database or a Math.random:'
+            echo "$bad"
+            exit 1
+          fi
+          echo 'ok: the engine is pure'
+
+      - name: The ancestor conformance corpus is still present and still non-trivial
+        run: |
+          set -uo pipefail
+          for f in ancestor-corpus.json ancestor-maps.json ancestor-bots.json; do
+            [ -s "src/fixtures/$f" ] || { echo "::error::src/fixtures/$f is missing or empty"; exit 1; }
+          done
+          n=$(node -e 'process.stdout.write(String(require("./src/fixtures/ancestor-corpus.json").length))')
+          [ "$n" -ge 18 ] || { echo "::error::the corpus has shrunk to $n recorded worlds"; exit 1; }
+          echo "ok: $n recorded worlds"
+
+      - name: This service holds no money
+        # There is no balance column anywhere and no ledger client at all: a cosmetic is a billing
+        # entitlement, and the only integers this service owns are game integers. A balance column
+        # is the first step of a second ledger.
+        run: |
+          set -uo pipefail
+          if grep -nE '^\s+(balance|shards|held_amount|available|amount_[a-z]+|price)\s' src/migrations.ts; then
+            echo '::error::a money column appeared in the schema; the ledger owns balances'
+            exit 1
+          fi
+          # Stripped and test-free: cosmetics.test.ts names LedgerClient in order to assert that
+          # nothing imports one, and a check that cannot tell those apart is a check people work
+          # around by rewording the assertion.
+          if grep -rlnE 'ledgerclient|LedgerClient|postEntry' /tmp/stripped/src/ 2>/dev/null; then
+            echo '::error::a ledger client appeared; this service moves no value'
+            exit 1
+          fi
+          echo 'ok: no money'
+
+      - name: Every mutating route still declares an idempotency policy
+        # Enforced by construction in the source (define() is GET-only and throws otherwise) and
+        # enumerated by server.test.ts. This is the third belt: the two builders must still exist.
+        run: |
+          grep -q 'defineMutation' /tmp/stripped/src/server.ts \
+            || { echo '::error::defineMutation is gone; a mutating route can now be added with no idempotency'; exit 1; }
+          grep -q 'idempotency-key' /tmp/stripped/src/server.ts \
+            || { echo '::error::no route requires an Idempotency-Key; a retry re-applies'; exit 1; }
+
+      - name: The inbound event webhook still verifies a signature
+        run: |
+          grep -q 'timingSafeEqual' /tmp/stripped/src/server.ts \
+            || { echo '::error::the event signature check is gone; POST /v1/events lets anyone erase an account'; exit 1; }
+
+      - name: The GDPR erasure path still exists
+        # 17-definition-of-done §2 makes this non-optional for any service storing a user_id, and
+        # this one stores one on every human survivor.
+        run: |
+          grep -q 'identity.user.deleted' /tmp/stripped/src/server.ts \
+            || { echo '::error::identity.user.deleted is no longer handled; this service stores user ids'; exit 1; }
+
+  hygiene:
+    uses: cloudsforge-online/micro-org/.github/workflows/secret-hygiene.yml@main
+    permissions:
+      contents: read
