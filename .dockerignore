@@ -1,0 +1,8 @@
+.env
+.env.*
+.git
+node_modules
+dist
+*.tsbuildinfo
+.DS_Store
+scripts
