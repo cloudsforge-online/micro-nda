@@ -119,7 +119,10 @@ export function registerHandlers(runner: JobRunner, deps: JobDeps): void {
         onConflict: 'keep',
       });
     }
-    if (ids.length > 0) deps.metrics.set('nda_worlds_due', ids.length);
+    // Set unconditionally, including to zero. A gauge only written when it is non-zero keeps its
+    // last value forever, so "worlds are overdue" would alert once and then never clear — which is
+    // worse than not having the gauge, because the dashboard says the backlog is still there.
+    deps.metrics.set('nda_worlds_due', ids.length);
   });
 
   runner.register<{ worldId?: string }>(WORLD_TICK_KIND, async (job: Job<{ worldId?: string }>) => {

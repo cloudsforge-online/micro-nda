@@ -66,7 +66,6 @@ import {
   achievementsOf,
   claimObjective,
   createWorld,
-  dueWorldIds,
   ensureProgress,
   findWorld,
   joinWorld,
@@ -96,7 +95,7 @@ import {
   withdrawFromCommune,
 } from './communes.ts';
 import { CosmeticNotOwnedError, equipCosmetic, parseEquipped } from './cosmetics.ts';
-import { WORLD_EVENT_TYPES, type QueuedAction, type WorldStatus } from './rules.ts';
+import type { QueuedAction, WorldStatus } from './rules.ts';
 import { WORLD_TICK_KIND } from './jobs.ts';
 
 export interface PrincipalVerifier {
@@ -1272,8 +1271,5 @@ function send(res: ServerResponse, reply: Reply, requestId: string): void {
   res.end(payload);
 }
 
-/** Exported for `server.test.ts`, which walks it rather than trusting a list someone maintains. */
+/** Exported for `server.test.ts`, which walks the built router rather than trusting a maintained list. */
 export type { Route };
-/** Referenced so the event-type table cannot be dropped without a compile error somewhere. */
-export const KNOWN_WORLD_EVENT_TYPES = WORLD_EVENT_TYPES;
-export { dueWorldIds };
