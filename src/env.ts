@@ -29,8 +29,6 @@ import { hostname } from 'node:os';
 /** This service's own name. A constant — a property of the repository, not the deployment. */
 export const SERVICE = 'nda';
 
-/** The title slug this service registers with worlds under. Also the entitlement title scope. */
-export const TITLE_SLUG = 'nda';
 
 export class EnvError extends Error {
   constructor(message: string) {

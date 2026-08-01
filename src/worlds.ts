@@ -14,19 +14,27 @@
  * second process. With one replica it was correct. With two it was a data-loss bug waiting for a
  * scale-up.
  *
- * There are TWO defences here and they are independent on purpose:
+ * There are two defences, in this order:
  *
  *   1. The lease. `world.tick` is a leased job keyed on the world id, claimed
  *      `for update skip locked` by `@cloudsforge/jobs`. Two runners cannot hold one key.
- *   2. The conditional advance. `persistDay` opens by taking `select ... from worlds where id = ?
+ *   2. **The day re-check.** `persistDay` opens by taking `select ... from worlds where id = ?
  *      for update` and refuses unless the row still reads `status = 'active'` and
- *      `day = <the day the simulation was computed from>`. A second writer therefore blocks until
- *      the first commits, re-reads a day that has moved, and returns `null` having written nothing.
+ *      `day = <the day the simulation was computed from>`. A second writer blocks on that lock
+ *      until the first commits, wakes to a day that has moved, and returns `null` having written
+ *      nothing.
  *
- * The second is what `jobs.test.ts` proves, because it is the one that holds when the FIRST fails
- * — a lease expired under a slow resolution, a manual re-run, an operator forcing a tick while the
- * scheduler is mid-flight. A defence that is only ever tested through the thing it backs up is not
- * a defence.
+ * The SECOND is the one `jobs.test.ts` proves, deterministically and without the queue, because it
+ * is what holds when the first fails: a lease expired under a slow resolution, a manual re-run, an
+ * operator forcing a tick while the scheduler is mid-flight. A defence that is only ever exercised
+ * through the thing it backs up has never actually been tested. Deleting the re-check turns three
+ * tests red.
+ *
+ * The `where ... and day = ...` on the final UPDATE is a THIRD line and is honestly redundant: the
+ * row lock taken at the top of the same transaction makes it unreachable, and deleting it turns
+ * nothing red. It is kept because it is free and because it states the invariant at the statement
+ * that would violate it — a later refactor that moves the re-check, or replaces the lock with an
+ * advisory one, would find it still there. It is not claimed as tested.
  * ═════════════════════════════════════════════════════════════════════════════════════════════
  */
 
@@ -477,12 +485,17 @@ export async function queueActions(
   return withOutbox(sql, producer, async (tx, emit) => {
     await tx`delete from queued_actions where player_id = ${me.id}`;
     if (input.actions.length > 0) {
+      // `tx.json(...)`, never `JSON.stringify(...)`. postgres.js sends a bare string to a jsonb
+      // column as a JSON STRING SCALAR — `jsonb_typeof` returns 'string', not 'object' — so the
+      // row reads back as `"{\"type\":\"work\"}"` and `action.type` is undefined. Every queued
+      // action then falls through the engine's switch and the day resolves as if the player had
+      // done nothing. It is silent: no error, no wrong number, just a survivor who never acts.
       const rows = input.actions.map((action, seq) => ({
         id: `${me.id}:${seq}`,
         world_id: me.world_id,
         player_id: me.id,
         seq,
-        action: JSON.stringify(action),
+        action: tx.json(action as unknown as Record<string, never>),
       }));
       await tx`insert into queued_actions ${tx(rows)}`;
     }
@@ -609,21 +622,23 @@ export async function enqueueBotActions(sql: Db, worldId: string): Promise<numbe
   );
 
   const botIds = bots.map((b) => b.id);
-  const rows = [...plan.entries()].flatMap(([playerId, actions]) =>
-    actions.map((action, seq) => ({
-      id: `${playerId}:${seq}`,
-      world_id: worldId,
-      player_id: playerId,
-      seq,
-      action: JSON.stringify(action),
-    })),
-  );
+  const count = [...plan.values()].reduce((n, actions) => n + actions.length, 0);
 
   await sql.begin(async (tx) => {
+    // See `queueActions` for why this is `tx.json` and not `JSON.stringify`.
+    const rows = [...plan.entries()].flatMap(([playerId, actions]) =>
+      actions.map((action, seq) => ({
+        id: `${playerId}:${seq}`,
+        world_id: worldId,
+        player_id: playerId,
+        seq,
+        action: tx.json(action as unknown as Record<string, never>),
+      })),
+    );
     await tx`delete from queued_actions where player_id = any(${tx.array(botIds)})`;
     if (rows.length > 0) await tx`insert into queued_actions ${tx(rows)}`;
   });
-  return rows.length;
+  return count;
 }
 
 /* ------------------------------------------------------------------------------ the tick */
@@ -886,8 +901,9 @@ async function persistDay(
 
     await tx`delete from queued_actions where world_id = ${w.id}`;
 
-    // The conditional advance. Belt to the lock's braces: even if the row lock were somehow not
-    // held, this UPDATE moves the day only from the value we simulated from.
+    // Belt to the lock's braces. Unreachable while the FOR UPDATE above is held — see the header;
+    // this is not claimed as a tested defence — but it puts the invariant on the statement that
+    // would break it.
     const advanced = await tx<{ id: string }[]>`
       update worlds
          set day = ${result.day},

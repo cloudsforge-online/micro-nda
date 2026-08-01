@@ -23,6 +23,17 @@
  * under utilities.
  */
 
+/**
+ * The title slug this game is registered with `worlds` under, and the scope its cosmetics are
+ * entitled in.
+ *
+ * A game fact, so it lives with the rules rather than in `env.ts`. That is not filing: `env.ts`
+ * validates eagerly and calls `process.exit(1)` on a bad configuration, so anything that imports it
+ * drags a whole environment into every unit test that touches the domain. Nothing in this
+ * repository imports `env.ts` except the two composition roots.
+ */
+export const TITLE_SLUG = 'nda';
+
 /* ------------------------------------------------------------------------------ resources */
 
 export const RESOURCE_KEYS = ['food', 'water', 'materials', 'fuel', 'medicine', 'seeds'] as const;

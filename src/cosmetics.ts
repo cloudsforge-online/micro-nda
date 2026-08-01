@@ -30,7 +30,7 @@
  */
 
 import type { EntitlementReader } from './billingclient.ts';
-import { TITLE_SLUG } from './env.ts';
+import { TITLE_SLUG } from './rules.ts';
 import { ConflictError, NotFoundError, ValidationError, type WithOutbox } from './worlds.ts';
 import type { Db } from './outbox.ts';
 

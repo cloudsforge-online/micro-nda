@@ -19,7 +19,7 @@
 
 import type { Logger } from '@cloudsforge/telemetry';
 import { WorldsRefusedError, WorldsUnavailableError, type WorldsClient } from './worldsclient.ts';
-import { TITLE_SLUG } from './env.ts';
+import { TITLE_SLUG } from './rules.ts';
 import type { Db } from './outbox.ts';
 
 export interface AchievementDeps {
