@@ -210,8 +210,18 @@ export function resolveDay(input: DayInput): DayResult {
 
   /* ---------------------------------------------------------------- working copies */
 
+  // Built in a DEFINED order — oldest homestead first, ties on id — rather than in whatever order
+  // the caller's array happened to arrive in. The ancestor read its roster with a bare
+  // `db.select()` and no `ORDER BY` (`resolve.ts:116`), then iterated that result for upkeep. Most
+  // of upkeep is per-player and order-blind, but the disease relief draws from the world's finite
+  // medicine pool, so with fewer units than sufferers WHICH survivor was resupplied depended on
+  // the plan Postgres picked. The action loop already sorted (`resolve.ts:246`); this extends the
+  // same total order to the rest of the day.
   const P = new Map<string, Working>();
-  for (const p of input.players) {
+  const orderedPlayers = [...input.players].sort(
+    (a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id),
+  );
+  for (const p of orderedPlayers) {
     P.set(p.id, {
       id: p.id,
       handle: p.handle,

@@ -1,0 +1,1133 @@
+[
+  {
+    "name": "one-of-each-personality",
+    "input": {
+      "seed": "w-botplan-0001",
+      "day": 8,
+      "players": [
+        {
+          "id": "b-farmer",
+          "handle": "bot-farmer-1",
+          "isBot": true,
+          "personality": "farmer",
+          "homesteadX": 3,
+          "homesteadY": 3,
+          "resources": {
+            "food": 12,
+            "water": 12,
+            "materials": 8,
+            "fuel": 2,
+            "medicine": 1,
+            "seeds": 5
+          },
+          "hp": 100,
+          "reputation": 0,
+          "defense": 0,
+          "alive": true,
+          "apPerDay": 6,
+          "joinedDay": 0
+        },
+        {
+          "id": "b-hermit",
+          "handle": "bot-hermit-2",
+          "isBot": true,
+          "personality": "hermit",
+          "homesteadX": 6,
+          "homesteadY": 6,
+          "resources": {
+            "food": 12,
+            "water": 12,
+            "materials": 8,
+            "fuel": 2,
+            "medicine": 1,
+            "seeds": 5
+          },
+          "hp": 55,
+          "reputation": 0,
+          "defense": 0,
+          "alive": true,
+          "apPerDay": 6,
+          "joinedDay": 0
+        },
+        {
+          "id": "b-trader",
+          "handle": "bot-trader-3",
+          "isBot": true,
+          "personality": "trader",
+          "homesteadX": 9,
+          "homesteadY": 9,
+          "resources": {
+            "food": 20,
+            "water": 20,
+            "materials": 10,
+            "fuel": 0,
+            "medicine": 0,
+            "seeds": 0
+          },
+          "hp": 100,
+          "reputation": 0,
+          "defense": 0,
+          "alive": true,
+          "apPerDay": 6,
+          "joinedDay": 0
+        },
+        {
+          "id": "b-raider",
+          "handle": "bot-raider-4",
+          "isBot": true,
+          "personality": "raider",
+          "homesteadX": 12,
+          "homesteadY": 12,
+          "resources": {
+            "food": 12,
+            "water": 12,
+            "materials": 8,
+            "fuel": 2,
+            "medicine": 1,
+            "seeds": 5
+          },
+          "hp": 100,
+          "reputation": 0,
+          "defense": 0,
+          "alive": true,
+          "apPerDay": 6,
+          "joinedDay": 0
+        },
+        {
+          "id": "b-nomad",
+          "handle": "bot-nomad-5",
+          "isBot": true,
+          "personality": "nomad",
+          "homesteadX": 15,
+          "homesteadY": 15,
+          "resources": {
+            "food": 12,
+            "water": 12,
+            "materials": 8,
+            "fuel": 2,
+            "medicine": 1,
+            "seeds": 5
+          },
+          "hp": 100,
+          "reputation": 0,
+          "defense": 0,
+          "alive": true,
+          "apPerDay": 6,
+          "joinedDay": 0
+        },
+        {
+          "id": "h-1",
+          "handle": "human-one",
+          "isBot": false,
+          "personality": null,
+          "homesteadX": 2,
+          "homesteadY": 18,
+          "resources": {
+            "food": 20,
+            "water": 20,
+            "materials": 10,
+            "fuel": 0,
+            "medicine": 0,
+            "seeds": 0
+          },
+          "hp": 100,
+          "reputation": 30,
+          "defense": 0,
+          "alive": true,
+          "apPerDay": 6,
+          "joinedDay": 0
+        },
+        {
+          "id": "h-2",
+          "handle": "human-two",
+          "isBot": false,
+          "personality": null,
+          "homesteadX": 18,
+          "homesteadY": 2,
+          "resources": {
+            "food": 12,
+            "water": 12,
+            "materials": 8,
+            "fuel": 2,
+            "medicine": 1,
+            "seeds": 5
+          },
+          "hp": 100,
+          "reputation": 5,
+          "defense": 1,
+          "alive": true,
+          "apPerDay": 6,
+          "joinedDay": 0
+        }
+      ],
+      "ruins": [
+        {
+          "x": 13,
+          "y": 3
+        },
+        {
+          "x": 9,
+          "y": 4
+        },
+        {
+          "x": 5,
+          "y": 5
+        },
+        {
+          "x": 11,
+          "y": 6
+        },
+        {
+          "x": 7,
+          "y": 9
+        },
+        {
+          "x": 15,
+          "y": 16
+        }
+      ],
+      "pending": []
+    },
+    "expected": [
+      {
+        "playerId": "b-farmer",
+        "seq": 0,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-farmer",
+        "seq": 1,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-farmer",
+        "seq": 2,
+        "action": {
+          "type": "fortify"
+        }
+      },
+      {
+        "playerId": "b-farmer",
+        "seq": 3,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-farmer",
+        "seq": 4,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-farmer",
+        "seq": 5,
+        "action": {
+          "type": "fortify"
+        }
+      },
+      {
+        "playerId": "b-hermit",
+        "seq": 0,
+        "action": {
+          "type": "rest"
+        }
+      },
+      {
+        "playerId": "b-hermit",
+        "seq": 1,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-hermit",
+        "seq": 2,
+        "action": {
+          "type": "rest"
+        }
+      },
+      {
+        "playerId": "b-hermit",
+        "seq": 3,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-hermit",
+        "seq": 4,
+        "action": {
+          "type": "rest"
+        }
+      },
+      {
+        "playerId": "b-hermit",
+        "seq": 5,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-nomad",
+        "seq": 0,
+        "action": {
+          "x": 15,
+          "y": 16,
+          "type": "scavenge"
+        }
+      },
+      {
+        "playerId": "b-nomad",
+        "seq": 1,
+        "action": {
+          "x": 15,
+          "y": 16,
+          "type": "scavenge"
+        }
+      },
+      {
+        "playerId": "b-nomad",
+        "seq": 2,
+        "action": {
+          "x": 15,
+          "y": 16,
+          "type": "scavenge"
+        }
+      },
+      {
+        "playerId": "b-nomad",
+        "seq": 3,
+        "action": {
+          "x": 15,
+          "y": 16,
+          "type": "scavenge"
+        }
+      },
+      {
+        "playerId": "b-nomad",
+        "seq": 4,
+        "action": {
+          "x": 15,
+          "y": 16,
+          "type": "scavenge"
+        }
+      },
+      {
+        "playerId": "b-nomad",
+        "seq": 5,
+        "action": {
+          "x": 15,
+          "y": 16,
+          "type": "scavenge"
+        }
+      },
+      {
+        "playerId": "b-raider",
+        "seq": 0,
+        "action": {
+          "type": "raid",
+          "targetPlayerId": "b-nomad"
+        }
+      },
+      {
+        "playerId": "b-raider",
+        "seq": 1,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-raider",
+        "seq": 2,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-raider",
+        "seq": 3,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-raider",
+        "seq": 4,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-raider",
+        "seq": 5,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-trader",
+        "seq": 0,
+        "action": {
+          "type": "trade",
+          "offer": {
+            "materials": 2
+          },
+          "request": {
+            "food": 2
+          },
+          "targetPlayerId": "h-1"
+        }
+      },
+      {
+        "playerId": "b-trader",
+        "seq": 1,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-trader",
+        "seq": 2,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-trader",
+        "seq": 3,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-trader",
+        "seq": 4,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-trader",
+        "seq": 5,
+        "action": {
+          "type": "work"
+        }
+      }
+    ]
+  },
+  {
+    "name": "a-trader-bot-accepts-a-human-offer",
+    "input": {
+      "seed": "w-botplan-0002",
+      "day": 10,
+      "players": [
+        {
+          "id": "b-trader",
+          "handle": "bot-trader-1",
+          "isBot": true,
+          "personality": "trader",
+          "homesteadX": 4,
+          "homesteadY": 4,
+          "resources": {
+            "food": 20,
+            "water": 20,
+            "materials": 10,
+            "fuel": 0,
+            "medicine": 0,
+            "seeds": 0
+          },
+          "hp": 100,
+          "reputation": 0,
+          "defense": 0,
+          "alive": true,
+          "apPerDay": 6,
+          "joinedDay": 0
+        },
+        {
+          "id": "b-farmer",
+          "handle": "bot-farmer-2",
+          "isBot": true,
+          "personality": "farmer",
+          "homesteadX": 8,
+          "homesteadY": 8,
+          "resources": {
+            "food": 12,
+            "water": 12,
+            "materials": 8,
+            "fuel": 2,
+            "medicine": 1,
+            "seeds": 5
+          },
+          "hp": 100,
+          "reputation": 0,
+          "defense": 0,
+          "alive": true,
+          "apPerDay": 6,
+          "joinedDay": 0
+        },
+        {
+          "id": "h-rich",
+          "handle": "trader-human",
+          "isBot": false,
+          "personality": null,
+          "homesteadX": 12,
+          "homesteadY": 12,
+          "resources": {
+            "food": 30,
+            "water": 30,
+            "materials": 30,
+            "fuel": 5,
+            "medicine": 0,
+            "seeds": 0
+          },
+          "hp": 100,
+          "reputation": 0,
+          "defense": 0,
+          "alive": true,
+          "apPerDay": 6,
+          "joinedDay": 0
+        }
+      ],
+      "ruins": [
+        {
+          "x": 8,
+          "y": 3
+        },
+        {
+          "x": 14,
+          "y": 5
+        },
+        {
+          "x": 7,
+          "y": 7
+        },
+        {
+          "x": 11,
+          "y": 8
+        },
+        {
+          "x": 13,
+          "y": 15
+        },
+        {
+          "x": 16,
+          "y": 16
+        }
+      ],
+      "pending": [
+        {
+          "playerId": "h-rich",
+          "seq": 0,
+          "action": {
+            "type": "trade",
+            "targetPlayerId": "b-trader",
+            "offer": {
+              "materials": 4
+            },
+            "request": {
+              "food": 3
+            }
+          }
+        },
+        {
+          "playerId": "h-rich",
+          "seq": 1,
+          "action": {
+            "type": "trade",
+            "targetPlayerId": "b-trader",
+            "offer": {
+              "seeds": 1
+            },
+            "request": {
+              "food": 19,
+              "water": 19
+            }
+          }
+        },
+        {
+          "playerId": "h-rich",
+          "seq": 2,
+          "action": {
+            "type": "trade",
+            "targetPlayerId": "b-trader",
+            "offer": {
+              "materials": 20
+            },
+            "request": {
+              "food": 17
+            }
+          }
+        }
+      ]
+    },
+    "expected": [
+      {
+        "playerId": "b-farmer",
+        "seq": 0,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-farmer",
+        "seq": 1,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-farmer",
+        "seq": 2,
+        "action": {
+          "type": "fortify"
+        }
+      },
+      {
+        "playerId": "b-farmer",
+        "seq": 3,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-farmer",
+        "seq": 4,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-farmer",
+        "seq": 5,
+        "action": {
+          "type": "fortify"
+        }
+      },
+      {
+        "playerId": "b-trader",
+        "seq": 0,
+        "action": {
+          "type": "trade",
+          "offer": {
+            "materials": 2
+          },
+          "request": {
+            "food": 2
+          },
+          "targetPlayerId": "b-farmer"
+        }
+      },
+      {
+        "playerId": "b-trader",
+        "seq": 1,
+        "action": {
+          "type": "trade",
+          "offer": {
+            "food": 3
+          },
+          "request": {
+            "materials": 4
+          },
+          "targetPlayerId": "h-rich"
+        }
+      },
+      {
+        "playerId": "b-trader",
+        "seq": 2,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-trader",
+        "seq": 3,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-trader",
+        "seq": 4,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-trader",
+        "seq": 5,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "h-rich",
+        "seq": 0,
+        "action": {
+          "type": "trade",
+          "offer": {
+            "materials": 4
+          },
+          "request": {
+            "food": 3
+          },
+          "targetPlayerId": "b-trader"
+        }
+      },
+      {
+        "playerId": "h-rich",
+        "seq": 1,
+        "action": {
+          "type": "trade",
+          "offer": {
+            "seeds": 1
+          },
+          "request": {
+            "food": 19,
+            "water": 19
+          },
+          "targetPlayerId": "b-trader"
+        }
+      },
+      {
+        "playerId": "h-rich",
+        "seq": 2,
+        "action": {
+          "type": "trade",
+          "offer": {
+            "materials": 20
+          },
+          "request": {
+            "food": 17
+          },
+          "targetPlayerId": "b-trader"
+        }
+      }
+    ]
+  },
+  {
+    "name": "raiders-spread-across-eligible-prey",
+    "input": {
+      "seed": "w-botplan-0003",
+      "day": 13,
+      "players": [
+        {
+          "id": "b-r1",
+          "handle": "bot-raider-1",
+          "isBot": true,
+          "personality": "raider",
+          "homesteadX": 2,
+          "homesteadY": 2,
+          "resources": {
+            "food": 12,
+            "water": 12,
+            "materials": 8,
+            "fuel": 2,
+            "medicine": 1,
+            "seeds": 5
+          },
+          "hp": 100,
+          "reputation": 0,
+          "defense": 0,
+          "alive": true,
+          "apPerDay": 6,
+          "joinedDay": 0
+        },
+        {
+          "id": "b-r2",
+          "handle": "bot-raider-2",
+          "isBot": true,
+          "personality": "raider",
+          "homesteadX": 12,
+          "homesteadY": 2,
+          "resources": {
+            "food": 12,
+            "water": 12,
+            "materials": 8,
+            "fuel": 2,
+            "medicine": 1,
+            "seeds": 5
+          },
+          "hp": 100,
+          "reputation": 0,
+          "defense": 0,
+          "alive": true,
+          "apPerDay": 6,
+          "joinedDay": 0
+        },
+        {
+          "id": "b-r3",
+          "handle": "bot-raider-3",
+          "isBot": true,
+          "personality": "raider",
+          "homesteadX": 2,
+          "homesteadY": 12,
+          "resources": {
+            "food": 12,
+            "water": 12,
+            "materials": 8,
+            "fuel": 2,
+            "medicine": 1,
+            "seeds": 5
+          },
+          "hp": 100,
+          "reputation": 0,
+          "defense": 0,
+          "alive": true,
+          "apPerDay": 6,
+          "joinedDay": 0
+        },
+        {
+          "id": "b-r4",
+          "handle": "bot-raider-4",
+          "isBot": true,
+          "personality": "raider",
+          "homesteadX": 20,
+          "homesteadY": 20,
+          "resources": {
+            "food": 12,
+            "water": 12,
+            "materials": 8,
+            "fuel": 2,
+            "medicine": 1,
+            "seeds": 5
+          },
+          "hp": 100,
+          "reputation": 0,
+          "defense": 0,
+          "alive": true,
+          "apPerDay": 6,
+          "joinedDay": 0
+        },
+        {
+          "id": "h-a",
+          "handle": "prey-a",
+          "isBot": false,
+          "personality": null,
+          "homesteadX": 6,
+          "homesteadY": 6,
+          "resources": {
+            "food": 12,
+            "water": 12,
+            "materials": 8,
+            "fuel": 2,
+            "medicine": 1,
+            "seeds": 5
+          },
+          "hp": 100,
+          "reputation": 0,
+          "defense": 0,
+          "alive": true,
+          "apPerDay": 6,
+          "joinedDay": 0
+        },
+        {
+          "id": "h-b",
+          "handle": "prey-b",
+          "isBot": false,
+          "personality": null,
+          "homesteadX": 16,
+          "homesteadY": 6,
+          "resources": {
+            "food": 12,
+            "water": 12,
+            "materials": 8,
+            "fuel": 2,
+            "medicine": 1,
+            "seeds": 5
+          },
+          "hp": 100,
+          "reputation": 0,
+          "defense": 4,
+          "alive": true,
+          "apPerDay": 6,
+          "joinedDay": 0
+        },
+        {
+          "id": "h-c",
+          "handle": "prey-c",
+          "isBot": false,
+          "personality": null,
+          "homesteadX": 6,
+          "homesteadY": 16,
+          "resources": {
+            "food": 12,
+            "water": 12,
+            "materials": 8,
+            "fuel": 2,
+            "medicine": 1,
+            "seeds": 5
+          },
+          "hp": 100,
+          "reputation": 0,
+          "defense": 9,
+          "alive": true,
+          "apPerDay": 6,
+          "joinedDay": 0
+        },
+        {
+          "id": "h-fort",
+          "handle": "prey-fortress",
+          "isBot": false,
+          "personality": null,
+          "homesteadX": 22,
+          "homesteadY": 22,
+          "resources": {
+            "food": 12,
+            "water": 12,
+            "materials": 8,
+            "fuel": 2,
+            "medicine": 1,
+            "seeds": 5
+          },
+          "hp": 100,
+          "reputation": 0,
+          "defense": 400,
+          "alive": true,
+          "apPerDay": 6,
+          "joinedDay": 0
+        },
+        {
+          "id": "h-new",
+          "handle": "prey-new",
+          "isBot": false,
+          "personality": null,
+          "homesteadX": 10,
+          "homesteadY": 10,
+          "resources": {
+            "food": 12,
+            "water": 12,
+            "materials": 8,
+            "fuel": 2,
+            "medicine": 1,
+            "seeds": 5
+          },
+          "hp": 100,
+          "reputation": 0,
+          "defense": 0,
+          "alive": true,
+          "apPerDay": 6,
+          "joinedDay": 12
+        }
+      ],
+      "ruins": [
+        {
+          "x": 10,
+          "y": 3
+        },
+        {
+          "x": 10,
+          "y": 6
+        },
+        {
+          "x": 14,
+          "y": 7
+        },
+        {
+          "x": 5,
+          "y": 10
+        },
+        {
+          "x": 13,
+          "y": 10
+        },
+        {
+          "x": 2,
+          "y": 14
+        },
+        {
+          "x": 6,
+          "y": 14
+        },
+        {
+          "x": 20,
+          "y": 18
+        },
+        {
+          "x": 15,
+          "y": 20
+        }
+      ],
+      "pending": []
+    },
+    "expected": [
+      {
+        "playerId": "b-r1",
+        "seq": 0,
+        "action": {
+          "type": "raid",
+          "targetPlayerId": "b-r3"
+        }
+      },
+      {
+        "playerId": "b-r1",
+        "seq": 1,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-r1",
+        "seq": 2,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-r1",
+        "seq": 3,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-r1",
+        "seq": 4,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-r1",
+        "seq": 5,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-r2",
+        "seq": 0,
+        "action": {
+          "type": "raid",
+          "targetPlayerId": "b-r4"
+        }
+      },
+      {
+        "playerId": "b-r2",
+        "seq": 1,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-r2",
+        "seq": 2,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-r2",
+        "seq": 3,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-r2",
+        "seq": 4,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-r2",
+        "seq": 5,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-r3",
+        "seq": 0,
+        "action": {
+          "type": "raid",
+          "targetPlayerId": "h-c"
+        }
+      },
+      {
+        "playerId": "b-r3",
+        "seq": 1,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-r3",
+        "seq": 2,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-r3",
+        "seq": 3,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-r3",
+        "seq": 4,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-r3",
+        "seq": 5,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-r4",
+        "seq": 0,
+        "action": {
+          "type": "raid",
+          "targetPlayerId": "h-a"
+        }
+      },
+      {
+        "playerId": "b-r4",
+        "seq": 1,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-r4",
+        "seq": 2,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-r4",
+        "seq": 3,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-r4",
+        "seq": 4,
+        "action": {
+          "type": "work"
+        }
+      },
+      {
+        "playerId": "b-r4",
+        "seq": 5,
+        "action": {
+          "type": "work"
+        }
+      }
+    ]
+  }
+]

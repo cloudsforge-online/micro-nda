@@ -142,6 +142,42 @@ export function touchStreak(prog: ProgressWork, currentDay: number): boolean {
 /** Morale bonus from the current login streak (escalating, capped). */
 export const streakMoraleBonus = (streak: number): number => Math.min(12, streak * 2);
 
+/**
+ * Fold one resolved day's delta into a progress row that has just been re-read under `FOR UPDATE`.
+ *
+ * This is the second half of the ancestor's delta design (`resolve.ts:751-810`) and it lives here,
+ * as one function, so that the persistence layer and the conformance test cannot disagree about
+ * what a delta means. `tokens` is untouched on purpose — the tick never awards them, and writing
+ * the column would revert a claim made while the day was being computed.
+ *
+ * A bot has no session, so the tick is its login and its skill spender; both are replayed against
+ * the fresh row rather than copied from the simulation's snapshot of it.
+ */
+export function applyProgressDelta(
+  fresh: ProgressWork,
+  delta: {
+    readonly xpGained: number;
+    readonly daysSurvived: number;
+    readonly contribution: number;
+    readonly isBot: boolean;
+    readonly personality: BotPersonality | null;
+    readonly aliveAtEnd: boolean;
+  },
+  day: number,
+): ProgressWork {
+  if (delta.xpGained > 0) grantXp(fresh, delta.xpGained);
+  fresh.daysSurvived += delta.daysSurvived;
+  fresh.contribution += delta.contribution;
+  if (delta.isBot) {
+    if (delta.aliveAtEnd) {
+      fresh.streak = fresh.lastSeenDay === day - 1 ? fresh.streak + 1 : Math.max(1, fresh.streak);
+      fresh.lastSeenDay = day;
+    }
+    autoSpendBotPerks(fresh, delta.personality);
+  }
+  return fresh;
+}
+
 /** A fresh in-engine progress working copy, for a player with no row yet. */
 export function defaultProgressWork(worldId: string, playerId: string): ProgressWork {
   return {
