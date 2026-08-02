@@ -102,7 +102,6 @@ export interface PrincipalVerifier {
   principal(token: string): Promise<Principal>;
 }
 
-export const READ_SCOPE = 'nda:read';
 export const WRITE_SCOPE = 'nda:write';
 
 const GRANTED_TOPIC = 'billing.entitlement.granted';
