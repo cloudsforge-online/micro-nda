@@ -1,5 +1,7 @@
 # micro-nda
 
+[![ci](https://github.com/cloudsforge-online/micro-nda/actions/workflows/ci.yml/badge.svg)](https://github.com/cloudsforge-online/micro-nda/actions/workflows/ci.yml) [![TypeScript](https://img.shields.io/badge/TypeScript-strict%20ESM-3178C6?logo=typescript&logoColor=white)](./tsconfig.base.json) [![node](https://img.shields.io/badge/node-%3E%3D22-5FA04E?logo=nodedotjs&logoColor=white)](./package.json) [![tests](https://img.shields.io/badge/tests-real%20Postgres-4169E1?logo=postgresql&logoColor=white)](./.github/workflows/ci.yml)
+
 *Ninety Days After* — the survival-strategy Forge Worlds title. Worlds, tiles, homesteads, queued
 actions, the **day-resolution engine**, reports, communes, progress, objectives and world events.
 
@@ -273,5 +275,5 @@ anyone remembering.
 
 ## Provenance
 
-The code in this repository was written by **Claude Opus 5** and **Claude Fable 5**, under
-human direction and review.
+The code in this repository was written by **Claude Opus 5** and **Claude Fable 5**, assets
+generated with **FLUX 2 Pro**, under human direction and review.
