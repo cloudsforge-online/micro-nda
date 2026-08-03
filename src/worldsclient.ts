@@ -62,13 +62,33 @@ import {
   serialiseAchievementUnlock,
 } from '@cloudsforge/contracts-worlds';
 import { TITLE_SLUG } from './rules.ts';
+import type { LiveScope } from '@cloudsforge/contracts-auth';
 
 /**
  * The scope this service's credential must carry to post a badge — read from the contract, which
  * reads it from worlds' own gate. Never spelled as a literal here again: a literal is what let
  * `worlds:write` sit in this file, wrong, for months.
+ *
+ * ── THE ANNOTATION: AN OUTBOUND DEMAND, TYPED AGAINST THE REGISTRY ───────────────────────────
+ *
+ * `readonly LiveScope[]`, not `readonly string[]`. `service-ci.yml` proves that every scope a
+ * repository's route GATES demand is registered — the INBOUND direction. This constant is the
+ * other one: what this service PRESENTS to a peer. Nothing had ever checked it, which is how
+ * `micro-market` declared `policy:evaluate` and `micro-wallet` `custody:address` — neither ever
+ * a registry key — for the life of both services. `derive-grants.mjs` reads this into
+ * `IDENTITY_SERVICE_TOKEN_GRANTS`, and identity validates that list at import and REFUSES TO
+ * START on an unknown name (`identity/src/env.ts:141`): a dead identity container, so no tokens
+ * for anybody.
+ *
+ * `LiveScope` rather than `Scope` because `Scope` is `keyof typeof SCOPES` — every registered
+ * key, DEPRECATED ones included — and identity will not mint a deprecated scope either.
+ * `LiveScope = Exclude<Scope, DeprecatedScope>`, with `DeprecatedScope` computed FROM `SCOPES` by
+ * a conditional type over the `deprecated` field rather than hand-listed
+ * (`contracts/packages/auth/src/index.ts:507`), so it cannot drift from the registry. `Scope`
+ * keeps its wide meaning and this does not narrow it: a token arriving from anywhere may carry a
+ * scope that has since died, so reading is wide and demanding is narrow. This is demanding.
  */
-export const WORLDS_SCOPES: readonly string[] = Object.freeze([SCOPE_FOR.unlockAchievement]);
+export const WORLDS_SCOPES: readonly LiveScope[] = Object.freeze([SCOPE_FOR.unlockAchievement]);
 
 /**
  * Worlds considered the request and declined it. TERMINAL — not retried.
