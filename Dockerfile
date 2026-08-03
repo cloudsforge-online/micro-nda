@@ -1,13 +1,17 @@
 # syntax=docker/dockerfile:1.7
 #
-# Build context is this repository, plus ONE named context for the unpublished sibling packages:
+# Build context is this repository, plus TWO named contexts for the unpublished sibling packages:
 #
-#   docker build -t nda --build-context runtimepkgs=../runtime .
+#   docker build -t nda \
+#     --build-context runtimepkgs=../runtime \
+#     --build-context contractspkgs=../contracts .
 #
-# Only `runtimepkgs`. This service depends on no @cloudsforge/contracts-* package — it moves no
-# money, holds no chain state and publishes no cross-service schema of its own — so the
-# `contractspkgs` context every money-touching service passes is not referenced here. The shared CI
-# workflow passes it anyway, which is harmless; a context a Dockerfile does not COPY from is ignored.
+# `contractspkgs` is referenced as of the achievement-bridge fix. It used to say that this service
+# depends on no @cloudsforge/contracts-* package, and that was true and was part of the problem: the
+# wire shapes it sends to worlds were hand-rolled here, drifted from the routes worlds actually
+# serves, and every cross-title badge was silently discarded. `@cloudsforge/contracts-worlds` now
+# owns them, so the context the shared CI workflow was already passing has to be COPYed from rather
+# than ignored — a `link:` dependency that is not present in the image fails `--frozen-lockfile`.
 #
 # The context is temporary. Once the @cloudsforge/* packages are published (AD-02), package.json
 # takes registry versions, the COPY lines below are deleted, the flag goes away, and this becomes an
@@ -31,14 +35,17 @@ WORKDIR /app
 # is why the contracts context carries its packages' manifests as well as their sources.
 COPY --from=runtimepkgs package.json pnpm-workspace.yaml pnpm-lock.yaml /runtime/
 COPY --from=runtimepkgs packages /runtime/packages
+COPY --from=contractspkgs package.json pnpm-workspace.yaml pnpm-lock.yaml /contracts/
+COPY --from=contractspkgs packages /contracts/packages
 
-# Install the sibling's OWN dependencies first. `link:` uses the sibling as-is and does not manage
-# its dependency tree, so /runtime's node_modules must exist independently — both for `tsc` to
-# resolve the sibling source it typechecks (jose, @opentelemetry/api) and for `node --import tsx` to
-# load @cloudsforge/* at run time. Without this the image builds a set of @cloudsforge symlinks that
-# point at source which cannot resolve its own imports.
+# Install the siblings' OWN dependencies first. `link:` uses the sibling as-is and does not manage
+# its dependency tree, so /runtime's and /contracts' node_modules must exist independently — both
+# for `tsc` to resolve the sibling source it typechecks (jose, @opentelemetry/api) and for
+# `node --import tsx` to load @cloudsforge/* at run time. Without this the image builds a set of
+# @cloudsforge symlinks that point at source which cannot resolve its own imports.
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm-store,sharing=locked \
-    pnpm --dir /runtime install --frozen-lockfile --config.store-dir=/pnpm-store
+    pnpm --dir /runtime install --frozen-lockfile --config.store-dir=/pnpm-store \
+ && pnpm --dir /contracts install --frozen-lockfile --config.store-dir=/pnpm-store
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 # `--frozen-lockfile` is the point of the step: a build that silently resolves a different
