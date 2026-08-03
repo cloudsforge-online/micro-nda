@@ -3,6 +3,8 @@
 *Ninety Days After* — the survival-strategy Forge Worlds title. Worlds, tiles, homesteads, queued
 actions, the **day-resolution engine**, reports, communes, progress, objectives and world events.
 
+Design authority: [`ecosystem/03-repository-responsibilities.md`](https://github.com/cloudsforge-online/micro-docs/blob/main/ecosystem/03-repository-responsibilities.md)
+
 Ported from `ninety-days-after/services/game`, which is frozen. Every `path:line` below points into
 that repository.
 
@@ -266,3 +268,10 @@ anyone remembering.
   terminal.
 - `migrations.test.ts` — every constraint fires, by inserting the illegal row.
 - `env.test.ts` — every required variable names itself when missing.
+
+---
+
+## Provenance
+
+The code in this repository was written by **Claude Opus 5** and **Claude Fable 5**, under
+human direction and review.
