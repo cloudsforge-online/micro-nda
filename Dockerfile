@@ -68,9 +68,21 @@ WORKDIR /app
 
 # No corepack, no pnpm, no build toolchain in the final image: fewer things an RCE can reach, and
 # nothing at runtime needs them.
-# The sibling comes across too: /app/node_modules holds @cloudsforge/* as symlinks into it, so
-# without the target the links dangle and the first `import '@cloudsforge/db'` fails at run time.
+# BOTH siblings come across: /app/node_modules holds @cloudsforge/* as symlinks into them, so
+# without the target the links dangle and the first import fails AT RUN TIME.
+#
+# /contracts is here as of the achievement bridge, and its absence is the exact failure it exists
+# to prevent, observed rather than imagined. The build stage resolved
+# `@cloudsforge/contracts-worlds` fine — it is COPYed into /contracts for `pnpm typecheck` — so
+# `typecheck`, `test` and every rule check went green, and the image still could not boot:
+#
+#   Cannot find package '@cloudsforge/contracts-worlds' imported from /app/src/worldsclient.ts
+#
+# That is precisely why the shared workflow MIGRATES AND BOOTS the container and reads /livez
+# rather than building it and inspecting its metadata. A build that succeeds proves the Dockerfile
+# parses; only starting it proves the image runs.
 COPY --from=build /runtime /runtime
+COPY --from=build /contracts /contracts
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/tsconfig.json /app/tsconfig.base.json ./
