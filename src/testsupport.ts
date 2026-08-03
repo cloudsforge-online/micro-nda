@@ -13,11 +13,35 @@
  * `fakeWorlds` is a REAL `node:http` server implementing the achievement bridge contract, so the
  * delivery job is exercised against a socket: its idempotency key, its auth header and its error
  * mapping are genuinely tested rather than stubbed.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * **THE FAKE USED TO BE WRITTEN FROM THE CLIENT, WHICH IS WHY IT COULD NOT FAIL.**
+ *
+ * It served exactly one route — `POST /internal/achievements` — because that is the route
+ * `worldsclient.ts` posted to. Real worlds serves no such route and never has. The two halves
+ * agreed with each other and disagreed with reality, so the whole achievement suite passed, green,
+ * for months, while every cross-title badge in the estate was silently discarded in production.
+ * A fake that is a copy of the caller tests that the caller equals itself.
+ *
+ * It is now written from the SERVER: the routes below are `worlds/src/server.ts`'s real routes and
+ * nothing else, its real gates (`worlds:title`, not `worlds:write`), its real UUID path check
+ * (`itemIdOf`, `:968-972`), its real define-before-unlock rule (`rewards.ts:216`) and its real
+ * 201/200 split (`:790`). Anything else 404s, exactly as worlds does. The bodies are parsed with
+ * `@cloudsforge/contracts-worlds`' parsers — the same functions the real server would use — so a
+ * client that renames a field cannot satisfy this fake either.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
  */
 
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import postgres from 'postgres';
+import {
+  SCOPE_FOR,
+  achievementIdempotencyKey,
+  isTitleId,
+  parseAchievementDefinition,
+  parseAchievementUnlock,
+} from '@cloudsforge/contracts-worlds';
 import { migrate, type Sql as DbSql } from '@cloudsforge/db';
 import { Logger, Metrics, registerHttpMetrics, registerJobMetrics } from '@cloudsforge/telemetry';
 import { MIGRATIONS, TABLES } from './migrations.ts';
@@ -32,18 +56,45 @@ export const CAROL = '33333333-3333-4333-8333-333333333333';
 
 /* ------------------------------------------------------------------ the fake worlds service */
 
+/** This service's title id in the fake registry. A UUID, because `itemIdOf` accepts nothing else. */
+export const NDA_TITLE_ID = '9d1a7c40-3f4b-4a2e-8b77-0f2c6d5e1a34';
+
 export interface FakeWorlds {
   readonly baseUrl: string;
   readonly token: string;
-  readonly posted: ReadonlyArray<{ userId: string; code: string; idempotencyKey: string }>;
-  /** Make the next N achievement posts fail with a 503, for the retry tests. */
+  /** Unlocks that actually landed, in worlds' vocabulary — `key`, never `code`. */
+  readonly posted: ReadonlyArray<{ userId: string; key: string; idempotencyKey: string }>;
+  /** Achievement keys worlds has been told about, via `PUT /v1/titles/:id/achievements`. */
+  readonly defined: ReadonlySet<string>;
+  /** Every path worlds was asked for, including the ones it 404'd. */
+  readonly requested: ReadonlyArray<string>;
+  /** Make the next N requests fail with a 503, for the retry tests. */
   failNext(count: number): void;
   close(): Promise<void>;
 }
 
-export async function fakeWorlds(token = 'worlds-token'): Promise<FakeWorlds> {
-  const posted: Array<{ userId: string; code: string; idempotencyKey: string }> = [];
-  const byKey = new Set<string>();
+export interface FakeWorldsOptions {
+  readonly token?: string;
+  /**
+   * The scopes the presented token carries. Defaults to what the unlock route actually demands.
+   * A test can hand over `['worlds:write']` — what this client claimed for months — and watch the
+   * delivery fail, which is the only way that gate is a gate rather than a comment.
+   */
+  readonly scopes?: readonly string[];
+  /** Register this service under a different slug, to exercise the unregistered-title path. */
+  readonly slug?: string;
+}
+
+export async function fakeWorlds(options: FakeWorldsOptions | string = {}): Promise<FakeWorlds> {
+  const opts: FakeWorldsOptions = typeof options === 'string' ? { token: options } : options;
+  const token = opts.token ?? 'worlds-token';
+  const scopes = opts.scopes ?? [SCOPE_FOR.unlockAchievement];
+  const slug = opts.slug ?? 'nda';
+
+  const posted: Array<{ userId: string; key: string; idempotencyKey: string }> = [];
+  const defined = new Set<string>();
+  const requested: string[] = [];
+  const unlocked = new Set<string>();
   let failures = 0;
 
   const server: Server = createServer((req, res) => {
@@ -55,39 +106,109 @@ export async function fakeWorlds(token = 'worlds-token'): Promise<FakeWorlds> {
       });
       res.end(payload);
     };
-    const url = new URL(req.url ?? '/', 'http://localhost');
-    if (url.pathname === '/livez') return reply(200, { ok: true });
-    if (url.pathname === '/internal/achievements' && req.method === 'POST') {
-      if (req.headers.authorization !== `Bearer ${token}`) {
-        return reply(401, { error: { code: 'unauthenticated', message: 'token required' } });
-      }
+    const readBody = (then: (body: unknown) => void): void => {
       const chunks: Buffer[] = [];
       req.on('data', (c: Buffer) => chunks.push(c));
       req.on('end', () => {
-        if (failures > 0) {
-          failures -= 1;
-          return reply(503, { error: { code: 'unavailable', message: 'restarting' } });
-        }
-        let body: Record<string, unknown> = {};
         try {
-          body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
+          then(JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown);
         } catch {
-          return reply(400, { error: { code: 'bad_request', message: 'not json' } });
+          reply(400, { error: { code: 'bad_request', message: 'not json' } });
         }
-        const key = String(body['idempotencyKey'] ?? '');
-        const replayed = byKey.has(key);
-        if (!replayed) {
-          byKey.add(key);
-          posted.push({
-            userId: String(body['userId'] ?? ''),
-            code: String(body['code'] ?? ''),
-            idempotencyKey: key,
+      });
+    };
+    /** worlds/src/server.ts:776-778 — authenticate, then `requireScope(principal, TITLE_SCOPE)`. */
+    const authorised = (): boolean => {
+      if (req.headers.authorization !== `Bearer ${token}`) {
+        reply(401, { error: { code: 'unauthenticated', message: 'token required' } });
+        return false;
+      }
+      if (!scopes.includes(SCOPE_FOR.unlockAchievement)) {
+        reply(403, {
+          error: { code: 'forbidden', message: `missing required authority: ${SCOPE_FOR.unlockAchievement}` },
+        });
+        return false;
+      }
+      return true;
+    };
+
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    requested.push(`${req.method ?? 'GET'} ${url.pathname}`);
+
+    if (url.pathname === '/livez') return reply(200, { ok: true });
+    if (failures > 0 && url.pathname !== '/v1/titles') {
+      failures -= 1;
+      return reply(503, { error: { code: 'unavailable', message: 'restarting' } });
+    }
+
+    // worlds/src/server.ts:507 — the registry, public and unauthenticated.
+    if (url.pathname === '/v1/titles' && req.method === 'GET') {
+      return reply(200, {
+        titles: [
+          { id: NDA_TITLE_ID, slug, name: 'Ninety Days After', status: 'live', capabilities: [], assetScopes: [] },
+        ],
+      });
+    }
+
+    // worlds/src/server.ts:754 and :775 — the only two achievement writes that exist, both under a
+    // UUID path. `itemIdOf` (:968-972) answers 404 to a path parameter that is not a UUID, which is
+    // exactly what a client sending a slug used to get.
+    const define = /^\/v1\/titles\/([^/]+)\/achievements$/.exec(url.pathname);
+    const unlock = /^\/v1\/titles\/([^/]+)\/achievements\/unlock$/.exec(url.pathname);
+    const id = define?.[1] ?? unlock?.[1];
+    if (id !== undefined && !isTitleId(id)) {
+      return reply(404, { error: { code: 'not_found', message: 'no such record' } });
+    }
+    if (id !== undefined && id !== NDA_TITLE_ID) {
+      return reply(404, { error: { code: 'not_found', message: 'no such title' } });
+    }
+
+    if (define && req.method === 'PUT') {
+      if (!authorised()) return undefined;
+      return readBody((body) => {
+        const parsed = parseAchievementDefinition(body);
+        if (!parsed.ok) {
+          return reply(400, { error: { code: 'bad_request', message: parsed.errors.join('; ') } });
+        }
+        defined.add(parsed.value.key);
+        return reply(200, {
+          achievement: { ...parsed.value, rewardShards: parsed.value.rewardShards.toString() },
+        });
+      });
+    }
+
+    if (unlock && req.method === 'POST') {
+      if (!authorised()) return undefined;
+      return readBody((body) => {
+        const parsed = parseAchievementUnlock(body);
+        if (!parsed.ok) {
+          return reply(400, { error: { code: 'bad_request', message: parsed.errors.join('; ') } });
+        }
+        // worlds/src/rewards.ts:215-216 — an unlock of an achievement worlds was never told about
+        // is refused, and the server maps that to 400.
+        if (!defined.has(parsed.value.key)) {
+          return reply(400, {
+            error: { code: 'bad_request', message: `no achievement ${parsed.value.key} for this title` },
           });
         }
-        return reply(replayed ? 200 : 201, { replayed });
+        const seen = `${parsed.value.userId}:${parsed.value.key}`;
+        const fresh = !unlocked.has(seen);
+        if (fresh) {
+          unlocked.add(seen);
+          posted.push({
+            userId: parsed.value.userId,
+            key: parsed.value.key,
+            idempotencyKey: String(req.headers['idempotency-key'] ?? ''),
+          });
+        }
+        // :790 — 201 on a fresh unlock, 200 on one that had already happened.
+        return reply(fresh ? 201 : 200, {
+          unlocked: fresh,
+          achievement: { key: parsed.value.key },
+        });
       });
-      return undefined;
     }
+
     return reply(404, { error: { code: 'not_found', message: 'no route' } });
   });
 
@@ -97,6 +218,8 @@ export async function fakeWorlds(token = 'worlds-token'): Promise<FakeWorlds> {
     baseUrl: `http://127.0.0.1:${port}`,
     token,
     posted,
+    defined,
+    requested,
     failNext(count) {
       failures = count;
     },
@@ -110,19 +233,30 @@ export async function worldsClientFor(worlds: FakeWorlds): Promise<WorldsClient>
   return httpWorldsClient({ baseUrl: worlds.baseUrl, token: () => worlds.token, deadlineMs: 5_000 });
 }
 
-/** A WorldsClient that records posts in-process (no socket), for unit-level tests. */
+/**
+ * A WorldsClient that records posts in-process (no socket), for unit-level tests.
+ *
+ * It derives the idempotency key the same way the real client does — through the contract — rather
+ * than reading one off the post. The old fake trusted a caller-supplied `idempotencyKey` field,
+ * so a caller that derived it from the job id would have looked correct here.
+ */
 export function fakeWorldsClient(): WorldsClient & { readonly posts: readonly AchievementPost[] } {
   const posts: AchievementPost[] = [];
   const seen = new Set<string>();
   return {
     posts,
     async postAchievement(post) {
-      const replayed = seen.has(post.idempotencyKey);
-      if (!replayed) {
-        seen.add(post.idempotencyKey);
+      const key = achievementIdempotencyKey({
+        titleId: NDA_TITLE_ID,
+        userId: post.userId,
+        key: post.key,
+      });
+      const fresh = !seen.has(key);
+      if (fresh) {
+        seen.add(key);
         posts.push(post);
       }
-      return { replayed };
+      return { unlocked: fresh };
     },
   };
 }

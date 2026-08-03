@@ -10,6 +10,8 @@
 
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import type postgres from 'postgres';
 import {
   enabled,
@@ -24,11 +26,18 @@ import {
   fakeWorldsClient,
   seedWorld,
   ALICE,
+  NDA_TITLE_ID,
   type FakeWorlds,
 } from './testsupport.ts';
 import { withOutbox } from './outbox.ts';
 import { deliverAchievement, outstandingAchievementIds } from './achievements.ts';
-import { WorldsRefusedError, WorldsUnavailableError, type WorldsClient } from './worldsclient.ts';
+import {
+  WorldsMisroutedError,
+  WorldsRefusedError,
+  WorldsUnavailableError,
+  httpWorldsClient,
+  type WorldsClient,
+} from './worldsclient.ts';
 import { resolveWorldDay, syncBots } from './worlds.ts';
 import { ACHIEVEMENTS } from './rules.ts';
 
@@ -83,8 +92,20 @@ test('achievements: an unlocked badge is delivered once and marked', { skip }, a
   const outcome = await deliverAchievement({ sql: db, worlds: client, logger: quietLogger() }, id, 'c1');
   assert.equal(outcome, 'delivered');
   assert.equal(worlds.posted.length, 1);
-  assert.equal(worlds.posted[0]!.code, 'days_30');
+  assert.equal(worlds.posted[0]!.key, 'days_30');
   assert.equal(worlds.posted[0]!.userId, ALICE);
+
+  // The badge landed on the route worlds actually serves, under the title's UUID. Asserted against
+  // the literal path rather than against a helper the client also uses: a test that builds the
+  // expected URL the same way the client does compares a value with a copy of itself.
+  assert.ok(
+    worlds.requested.includes(`POST /v1/titles/${NDA_TITLE_ID}/achievements/unlock`),
+    `the unlock never reached worlds' real route; it asked for ${JSON.stringify(worlds.requested)}`,
+  );
+  assert.ok(
+    !worlds.requested.some((r) => r.includes('/internal/')),
+    'the client is still calling a route worlds does not serve',
+  );
 
   // Marked, so the sweep stops finding it.
   assert.deepEqual(await outstandingAchievementIds(db), []);
@@ -107,8 +128,8 @@ test('achievements: the delivery key is derived from (user, code), not from the 
   await deliverAchievement({ sql: db, worlds: recorder, logger: quietLogger() }, id, 'job-beta');
 
   assert.equal(recorder.posts.length, 1, 'two attempts produced two distinct posts');
-  assert.equal(recorder.posts[0]!.idempotencyKey, `nda:achievement:${ALICE}:first_trade`);
-  assert.equal(recorder.posts[0]!.titleSlug, 'nda');
+  assert.equal(recorder.posts[0]!.key, 'first_trade');
+  assert.equal(recorder.posts[0]!.userId, ALICE);
 });
 
 test('achievements: a brief outage is absorbed inside one delivery, on the same key', { skip }, async () => {
@@ -124,7 +145,7 @@ test('achievements: a brief outage is absorbed inside one delivery, on the same 
     await deliverAchievement({ sql: db, worlds: client, logger: quietLogger() }, id, 'c1'),
     'delivered',
   );
-  assert.equal(worlds.posted.filter((p) => p.code === 'fort_20').length, 1);
+  assert.equal(worlds.posted.filter((p) => p.key === 'fort_20').length, 1);
 });
 
 test('achievements: a longer outage delays the badge and then it lands', { skip }, async () => {
@@ -158,7 +179,7 @@ test('achievements: a longer outage delays the badge and then it lands', { skip 
     'delivered',
   );
   assert.equal(
-    worlds.posted.filter((p) => p.code === 'first_kill').length,
+    worlds.posted.filter((p) => p.key === 'first_kill').length,
     1,
     'the outage produced a duplicate badge once worlds came back',
   );
@@ -180,6 +201,157 @@ test('achievements: a permanent refusal is terminal, not an infinite retry', { s
   );
   assert.equal(outcome, 'refused', 'a 4xx was retried; the job would spin until it died');
 });
+
+/* ------------------------------------------- the defect: a badge that was thrown away in silence */
+
+/**
+ * A worlds that serves its registry and nothing else — the exact shape of production for four
+ * months. Real worlds has 22 routes and none of them was the one this client asked for, so every
+ * unlock came back 404.
+ */
+async function worldsWithoutTheUnlockRoute(): Promise<{ baseUrl: string; close(): Promise<void> }> {
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const send = (status: number, body: unknown): void => {
+      const payload = `${JSON.stringify(body)}\n`;
+      res.writeHead(status, {
+        'content-type': 'application/json; charset=utf-8',
+        'content-length': Buffer.byteLength(payload),
+      });
+      res.end(payload);
+    };
+    if (url.pathname === '/v1/titles' && req.method === 'GET') {
+      return send(200, { titles: [{ id: NDA_TITLE_ID, slug: 'nda', name: 'Ninety Days After' }] });
+    }
+    return send(404, { error: { code: 'not_found', message: 'no route' } });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+  const { port } = server.address() as AddressInfo;
+  return {
+    baseUrl: `http://127.0.0.1:${port}`,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
+
+test(
+  'achievements: a route worlds does not serve keeps the badge, it does not discard it',
+  { skip },
+  async () => {
+    // THE REGRESSION. This is the defect exactly: worlds answers 404 because the endpoint is not
+    // there. 404 is a 4xx, so `HttpError.peerDecided` is true, so the old client raised
+    // `WorldsRefusedError` and `deliverAchievement` returned the TERMINAL outcome 'refused' — the
+    // row was left undelivered but the sweep had already been told the answer was final, and the
+    // badge was gone. Nothing threw, nothing was logged at error, and every test was green.
+    //
+    // "The endpoint does not exist" and "the peer declined" are different facts. Only the second is
+    // safe to stop retrying on. So this must THROW, keeping the badge for a later sweep.
+    const db = asDb(sql);
+    const dead = await worldsWithoutTheUnlockRoute();
+    try {
+      const { worldId, playerIds } = await seedWorld(sql, { seed: 'missing-route' });
+      const id = await unlock(worldId, playerIds[0]!, 'days_60');
+      const blind = httpWorldsClient({
+        baseUrl: dead.baseUrl,
+        token: () => 'worlds-token',
+        deadlineMs: 5_000,
+      });
+
+      const outcome = await deliverAchievement(
+        { sql: db, worlds: blind, logger: quietLogger() },
+        id,
+        'c1',
+      ).then(
+        (value) => ({ kind: 'returned' as const, value }),
+        (err: unknown) => ({ kind: 'threw' as const, err }),
+      );
+
+      assert.equal(
+        outcome.kind,
+        'threw',
+        `a 404 was recorded as the terminal outcome ${JSON.stringify((outcome as { value?: string }).value)} — the badge was discarded, not delayed`,
+      );
+      assert.ok(
+        outcome.kind === 'threw' && outcome.err instanceof WorldsMisroutedError,
+        `expected a misrouted error, got ${String(outcome.kind === 'threw' ? outcome.err : '')}`,
+      );
+      assert.notEqual(
+        outcome.kind === 'threw' && outcome.err instanceof WorldsRefusedError,
+        true,
+        'a missing endpoint was classified as the peer refusing',
+      );
+
+      // And the badge survives, which is the property the user actually cares about.
+      assert.deepEqual(
+        await outstandingAchievementIds(db),
+        [id],
+        'the badge left the sweep — it can never be delivered now',
+      );
+      const [row] = await sql<{ delivered_at: Date | null }[]>`
+        select delivered_at from achievements where id = ${id}`;
+      assert.equal(row!.delivered_at, null, 'an undelivered badge was marked delivered');
+    } finally {
+      await dead.close();
+    }
+  },
+);
+
+test(
+  'achievements: the scope worlds demands is the scope we present, and a wrong one is not terminal',
+  { skip },
+  async () => {
+    // Both clients declared `worlds:write` for months. The unlock route demands `worlds:title`
+    // (worlds/src/server.ts:777) — a separate authority so a title's credential cannot edit a
+    // player's profile. Fixing only the route would have turned a silent 404 into a silent 403.
+    const db = asDb(sql);
+    const underscoped = await fakeWorlds({ scopes: ['worlds:write'] });
+    try {
+      const { worldId, playerIds } = await seedWorld(sql, { seed: 'scope' });
+      const id = await unlock(worldId, playerIds[0]!, 'level_10');
+      const client403 = await worldsClientFor(underscoped);
+
+      await assert.rejects(
+        () => deliverAchievement({ sql: db, worlds: client403, logger: quietLogger() }, id, 'c1'),
+        WorldsMisroutedError,
+        'a 403 for a missing scope was swallowed as a refusal; the badge would be gone',
+      );
+      assert.deepEqual(await outstandingAchievementIds(db), [id]);
+      assert.equal(underscoped.posted.length, 0);
+    } finally {
+      await underscoped.close();
+    }
+  },
+);
+
+test(
+  'achievements: an achievement is defined before it is unlocked',
+  { skip },
+  async () => {
+    // `worlds/src/rewards.ts:215-216` refuses an unlock for an achievement it has never been told
+    // about, and the server maps that to 400. The old client sent `name` and `points` on the
+    // unlock, believing worlds would create the achievement for it — it does not. Two calls, two
+    // documents.
+    const db = asDb(sql);
+    const fresh = await fakeWorlds();
+    try {
+      const { worldId, playerIds } = await seedWorld(sql, { seed: 'define' });
+      const id = await unlock(worldId, playerIds[0]!, 'days_90');
+      const c = await worldsClientFor(fresh);
+
+      assert.equal(
+        await deliverAchievement({ sql: db, worlds: c, logger: quietLogger() }, id, 'c1'),
+        'delivered',
+      );
+      assert.ok(fresh.defined.has('days_90'), 'the badge was unlocked without ever being defined');
+      assert.ok(
+        fresh.requested.indexOf(`PUT /v1/titles/${NDA_TITLE_ID}/achievements`) <
+          fresh.requested.indexOf(`POST /v1/titles/${NDA_TITLE_ID}/achievements/unlock`),
+        'the unlock was sent before the definition',
+      );
+    } finally {
+      await fresh.close();
+    }
+  },
+);
 
 test('achievements: a bot badge is never posted to a profile', { skip }, async () => {
   // A bot has no account, so there is no profile to post to. Excluded at the SOURCE rather than at

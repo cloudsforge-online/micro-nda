@@ -11,6 +11,9 @@ importers:
       '@cloudsforge/auth':
         specifier: link:../runtime/packages/auth
         version: link:../runtime/packages/auth
+      '@cloudsforge/contracts-worlds':
+        specifier: link:../contracts/packages/worlds
+        version: link:../contracts/packages/worlds
       '@cloudsforge/db':
         specifier: link:../runtime/packages/db
         version: link:../runtime/packages/db
@@ -36,6 +39,9 @@ importers:
       '@types/node':
         specifier: ^22.10.2
         version: 22.20.1
+      jose:
+        specifier: ^5.9.6
+        version: 5.10.0
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -211,6 +217,9 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
+  jose@5.10.0:
+    resolution: {integrity: sha512-s+3Al/p9g32Iq+oqXxkW//7jk2Vig6FF1CFqzVXoTUXt2qz89YWbL+OwS17NFYEvxC35n0FKeGO2LGYSxeM2Gg==}
+
   postgres@3.4.9:
     resolution: {integrity: sha512-GD3qdB0x1z9xgFI6cdRD6xu2Sp2WCOEoe3mtnyB5Ee0XrrL5Pe+e4CCnJrRMnL1zYtRDZmQQVbvOttLnKDLnaw==}
     engines: {node: '>=12'}
@@ -343,6 +352,8 @@ snapshots:
 
   fsevents@2.3.3:
     optional: true
+
+  jose@5.10.0: {}
 
   postgres@3.4.9: {}
 

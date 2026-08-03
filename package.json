@@ -30,6 +30,7 @@
   ],
   "dependencies": {
     "@cloudsforge/auth": "link:../runtime/packages/auth",
+    "@cloudsforge/contracts-worlds": "link:../contracts/packages/worlds",
     "@cloudsforge/db": "link:../runtime/packages/db",
     "@cloudsforge/http": "link:../runtime/packages/http",
     "@cloudsforge/jobs": "link:../runtime/packages/jobs",
@@ -38,8 +39,18 @@
     "postgres": "^3.4.5",
     "tsx": "^4.19.2"
   },
+  "_joseIsForTheSuiteOnly": [
+    "jose signs and verifies RS256 in servicetoken.test.ts. It is a devDependency because this",
+    "service never verifies a token itself — @cloudsforge/auth's Verifier does, and it carries its",
+    "own copy. Every other consuming repository in the estate declares it the same way.",
+    "",
+    "The test needs a REAL verifier rather than the by-token stub server.test.ts uses, because the",
+    "property under test is that a token dies of its own expiry. A stub that decided expiry by hand",
+    "would be a test agreeing with itself, which is the shape that let the ten-minute cliff through."
+  ],
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "jose": "^5.9.6",
     "typescript": "^5.7.2"
   }
 }

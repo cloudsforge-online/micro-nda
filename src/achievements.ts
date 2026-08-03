@@ -12,14 +12,23 @@
  * transaction — and the job posts it and marks it delivered. So a worlds outage delays a badge; it
  * does not lose one, and it cannot produce two.
  *
- * The delivery key is derived from `(userId, achId)`, NOT from the job id: a job that is retried,
- * redelivered or run by a different replica must post the same key, or worlds records the badge
- * twice.
+ * The delivery key is derived from `(titleId, userId, key)`, NOT from the job id: a job that is
+ * retried, redelivered or run by a different replica must post the same key, or worlds records the
+ * badge twice. It is derived by `@cloudsforge/contracts-worlds` rather than spelled here, because
+ * this service and emberkin previously spelled it two different ways.
+ *
+ * **A delivery has three outcomes, not two.** Worlds declining a badge and this service failing to
+ * reach worlds are different facts, and only the first is safe to stop retrying on. Treating them
+ * as one is what dropped every cross-title badge in the estate; see `worldsclient.ts`.
  */
 
 import type { Logger } from '@cloudsforge/telemetry';
-import { WorldsRefusedError, WorldsUnavailableError, type WorldsClient } from './worldsclient.ts';
-import { TITLE_SLUG } from './rules.ts';
+import {
+  WorldsMisroutedError,
+  WorldsRefusedError,
+  WorldsUnavailableError,
+  type WorldsClient,
+} from './worldsclient.ts';
 import type { Db } from './outbox.ts';
 
 export interface AchievementDeps {
@@ -35,6 +44,7 @@ interface AchievementRow {
   readonly user_id: string | null;
   readonly ach_id: string;
   readonly name: string;
+  readonly description: string;
   readonly points: number;
   readonly delivered_at: Date | null;
 }
@@ -67,7 +77,7 @@ export async function deliverAchievement(
   correlationId: string,
 ): Promise<DeliverOutcome> {
   const rows = await deps.sql<AchievementRow[]>`
-    select a.id, p.user_id, a.ach_id, a.name, a.points, a.delivered_at
+    select a.id, p.user_id, a.ach_id, a.name, a.description, a.points, a.delivered_at
       from achievements a join players p on p.id = a.player_id
      where a.id = ${achievementId}`;
   const row = rows[0];
@@ -78,15 +88,27 @@ export async function deliverAchievement(
   try {
     await deps.worlds.postAchievement({
       userId: row.user_id,
-      titleSlug: TITLE_SLUG,
-      code: row.ach_id,
+      key: row.ach_id,
       name: row.name,
+      description: row.description,
       points: row.points,
       correlationId,
-      idempotencyKey: `${TITLE_SLUG}:achievement:${row.user_id}:${row.ach_id}`,
     });
   } catch (err) {
     if (err instanceof WorldsUnavailableError) throw err; // retry with backoff
+    if (err instanceof WorldsMisroutedError) {
+      // NOT `'refused'`, and this branch is the whole point of the fix. Worlds did not decide
+      // anything: we called it wrongly, so the badge is undelivered rather than declined. Thrown,
+      // so the row keeps `delivered_at = null` and the sweep comes back for it once the wiring is
+      // fixed; logged at `error`, because nothing will fix it on its own. For four months this
+      // fell into the branch below and every cross-title badge in the estate was discarded.
+      deps.logger.error('a badge could not be delivered because this service is wired wrong', {
+        achievementId,
+        status: err.status,
+        err: err.message,
+      });
+      throw err;
+    }
     if (err instanceof WorldsRefusedError) {
       deps.logger.warn('worlds refused an achievement permanently', {
         achievementId,

@@ -201,7 +201,7 @@ counted as a defence.
 
 ```bash
 pnpm install
-cp .env.example .env          # then set OUTBOX_SIGNING_SECRET and NDA_SERVICE_TOKEN
+cp .env.example .env          # then set OUTBOX_SIGNING_SECRET and NDA_IDENTITY_CREDENTIAL
 pnpm migrate                  # a SEPARATE one-shot; index.ts asserts the version, never applies it
 pnpm start
 ```

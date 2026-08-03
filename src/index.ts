@@ -11,15 +11,14 @@
 import postgres from 'postgres';
 import { assertSchemaAtLeast, type Sql as DbSql } from '@cloudsforge/db';
 import { JobQueue, JobRunner, type Sql as JobsSql } from '@cloudsforge/jobs';
-import { Verifier } from '@cloudsforge/auth';
+import { Verifier, serviceTokenProbe } from '@cloudsforge/auth';
 import { Lifecycle, httpProbe, installSignalHandlers, postgresProbe } from '@cloudsforge/lifecycle';
 import { Logger, Metrics, registerHttpMetrics, registerJobMetrics } from '@cloudsforge/telemetry';
 import { SERVICE, env } from './env.ts';
 import { SCHEMA_VERSION } from './migrations.ts';
 import { createServer, registerServiceMetrics } from './server.ts';
 import { onRunnerEvent, registerHandlers, seedRecurring } from './jobs.ts';
-import { httpBillingClient } from './billingclient.ts';
-import { httpWorldsClient } from './worldsclient.ts';
+import { buildUpstreams } from './upstreams.ts';
 import type { Db } from './outbox.ts';
 
 // 1. Environment — validated on import of ./env.ts.
@@ -46,19 +45,46 @@ try {
   process.exit(1);
 }
 
-// 5. The upstreams. Both take the same scoped service token — never a shared one (SD-05).
-// There is no ledger client, on purpose: this service moves no value. See env.ts.
-const token = (): string => env.serviceToken;
-const billing = httpBillingClient({
-  baseUrl: env.billingUrl,
-  token,
-  deadlineMs: env.upstreamDeadlineMs,
+// 5. The upstreams, and the credential that authenticates every call to them. There is still no
+//    ledger client, on purpose: this service moves no value. See env.ts. The wiring itself lives
+//    in `./upstreams.ts` and is covered by `servicetoken.test.ts` — it was untestable here, and
+//    what was untestable here was wrong for months. See that file.
+const { identityTokens, billing, worlds } = buildUpstreams(env, {
+  onEvent: (event) => {
+    if (event.kind === 'exchange_failed') {
+      // `warn`, not `error`, while a usable token is still held: the 20% slack after the refresh
+      // point exists precisely so a few of these are survivable and uninteresting.
+      const level = event.hadUsableToken ? 'warn' : 'error';
+      logger[level]('service token exchange failed', {
+        err: event.err,
+        hadUsableToken: event.hadUsableToken,
+      });
+    } else if (event.kind === 'minted') {
+      logger.info('service token minted', {
+        service: event.service,
+        expiresIn: event.expiresIn,
+        refreshInMs: event.refreshInMs,
+      });
+    } else {
+      logger.warn('service token', { event: event.kind, url: event.url });
+    }
+  },
 });
-const worlds = httpWorldsClient({
-  baseUrl: env.worldsUrl,
-  token,
-  deadlineMs: env.upstreamDeadlineMs,
-});
+
+if (!identityTokens) {
+  // Not `fatal` and exit: the image must be able to boot without this so CI's startup smoke test
+  // can read /livez, and a service that refuses to start is a service whose logs nobody reads.
+  // `/readyz` is where the absence is enforced — the `identity-credential` probe below is hard,
+  // so an unconfigured replica takes no traffic.
+  logger.error('NDA_IDENTITY_CREDENTIAL is not set; every call to a peer will fail 503', {
+    hint: 'deploy/scripts/estate-bootstrap.sh writes it to compose/estate/tokens.env',
+  });
+}
+if (env.legacyServiceTokenPresent) {
+  logger.error('NDA_SERVICE_TOKEN is set and is IGNORED', {
+    hint: 'it was a 600-second token read once at boot; NDA_IDENTITY_CREDENTIAL replaces it',
+  });
+}
 
 // 6. Lifecycle and probes.
 //
@@ -86,6 +112,11 @@ lifecycle
     ),
   )
   .addProbe(httpProbe('identity-jwks', env.identityJwksUrl, { kind: 'soft' }))
+  // HARD, unlike the two soft upstream probes below. It does not report a peer having a bad
+  // minute — it fails only when no credential is configured at all, which is a deployment that
+  // cannot make a single authenticated call and will not fix itself. An identity OUTAGE returns
+  // warn, deliberately, so one bad minute in identity does not empty every balancer in the estate.
+  .addProbe(serviceTokenProbe(identityTokens))
   .addProbe(httpProbe('billing', `${env.billingUrl}/livez`, { kind: 'soft' }))
   .addProbe(httpProbe('worlds', `${env.worldsUrl}/livez`, { kind: 'soft' }));
 
