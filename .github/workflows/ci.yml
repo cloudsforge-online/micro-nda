@@ -227,9 +227,25 @@ jobs:
             || { echo '::error::no route requires an Idempotency-Key; a retry re-applies'; exit 1; }
 
       - name: The inbound event webhook still verifies a signature
+        # This grepped for `timingSafeEqual`, which named the PRIMITIVE of a local scheme rather
+        # than the property. `fd8380e` replaced that scheme with the estate's own — the route now
+        # calls `verifyDelivery` from `@cloudsforge/contracts-events`, which still compares in
+        # constant time (contracts packages/events/src/index.ts:1551) and additionally binds a
+        # timestamp into the MAC so a captured delivery cannot be replayed. The property got
+        # stronger and the check went red, which is a check asserting an implementation detail.
+        #
+        # So assert the property instead, in the two halves that make it one: the route verifies
+        # (`verifyDelivery`) against the header the estate really sends (`SIGNATURE_HEADER`), and
+        # a delivery that does not verify is REFUSED rather than logged (`bad_signature`). Both
+        # are also driven for real by `server.test.ts` — an unsigned event and one signed with the
+        # wrong secret must each answer 403. This is the third belt, not the only one.
         run: |
-          grep -q 'timingSafeEqual' /tmp/stripped/src/server.ts \
+          grep -q 'verifyDelivery' /tmp/stripped/src/server.ts \
             || { echo '::error::the event signature check is gone; POST /v1/events lets anyone erase an account'; exit 1; }
+          grep -q 'SIGNATURE_HEADER' /tmp/stripped/src/server.ts \
+            || { echo '::error::the estate signature header is no longer read; a signed delivery would be verified against nothing'; exit 1; }
+          grep -q 'bad_signature' /tmp/stripped/src/server.ts \
+            || { echo '::error::a failed signature no longer refuses the delivery'; exit 1; }
 
       - name: The GDPR erasure path still exists
         # 17-definition-of-done §2 makes this non-optional for any service storing a user_id, and
