@@ -27,7 +27,7 @@
  */
 
 import { hostname } from 'node:os';
-import { assertGeneratedSecret, SecretError } from '@cloudsforge/secrets';
+import { assertGeneratedSecret, assertServiceCredential, SecretError } from '@cloudsforge/secrets';
 
 /** This service's own name. A constant — a property of the repository, not the deployment. */
 export const SERVICE = 'nda';
@@ -39,23 +39,6 @@ export class EnvError extends Error {
     this.name = 'EnvError';
   }
 }
-
-/**
- * Placeholders refused in an OPAQUE credential — a value identity minted, which is not generated
- * key material and cannot be held to the base64/hex shape below. The estate's event-bus HMAC key
- * is NOT checked against this list any more: see `requiredSigningSecret`.
- */
-const PLACEHOLDERS = new Set([
-  'changeme',
-  'change_me',
-  'change-me',
-  'placeholder',
-  'secret',
-  'token',
-  'dev-secret',
-  'replace-with-a-real-secret',
-  'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-]);
 
 type Source = Readonly<Record<string, string | undefined>>;
 
@@ -112,23 +95,44 @@ function requiredSigningSecret(source: Source, name: string): string {
 }
 
 /**
- * A secret that may be absent, but must be real if present.
+ * A service credential that may be absent, but must be a REAL credential if present.
  *
- * The distinction matters for the identity credential: absent is a deployment that has not been
- * given one yet and is reported by `/readyz`; a short placeholder is a deployment that believes it
- * HAS one, and would fail on its first call to a peer with a 401 that reads as "identity rejected
- * this service" rather than "nobody set this variable".
+ * The distinction matters: absent is a deployment that has not been given one yet and is reported
+ * by `/readyz`; a placeholder is a deployment that believes it HAS one, and fails on its first call
+ * to a peer with a 401 that reads as "identity rejected this service" rather than "nobody set this
+ * variable".
+ *
+ * ── THE CLASS WAS MEASURED, NOT READ OFF THE NAME ─────────────────────────────────────────────
+ *
+ * The deny-list this replaces sat under a header calling `NDA_IDENTITY_CREDENTIAL` an OPAQUE
+ * credential that "cannot be held to a shape". THAT WAS WRONG, AND A WRONG COMMENT IS BELIEVED.
+ * Measured on the live estate, both networks, 2026-08-06:
+ *
+ *     mainnet   cfsc_ + 43 characters, base64url body
+ *     testnet   cfsc_ + 43 characters, base64url body, CONTAINS A HYPHEN
+ *
+ * It has a shape and identity defines it: `cfsc_` then base64url. Opaque is the class for a value
+ * a VENDOR issued — an SMTP password, a chain node's RPC password — where the alphabet belongs to
+ * somebody else. This is minted by micro-identity, in this estate, to a format this estate wrote.
+ *
+ * It is not `assertGeneratedSecret` either, which is the obvious-looking reuse: a credential is
+ * neither wholly base64 nor wholly hex — the underscore in its own prefix disqualifies it — so
+ * that rule would refuse every credential ever minted and exit 1 at boot on BOTH networks.
+ *
+ * AND THE HYPHEN IS THE TRAP. Testnet's body carries one and mainnet's does not. A "no hyphens"
+ * rule is correct for a generated key, reads as obviously right in review, passes mainnet and
+ * kills testnet at boot. `@cloudsforge/secrets` pins a hyphenated fixture so that regression fails
+ * CI rather than one estate.
  */
-function optionalSecret(source: Source, name: string, minLength = 24): string | null {
-  const value = source[name]?.trim()
-  if (!value) return null
-  if (PLACEHOLDERS.has(value.toLowerCase())) {
-    throw new EnvError(`${name} is set to a known placeholder — generate a real secret`)
+function optionalCredential(source: Source, name: string): string | null {
+  const value = source[name]?.trim();
+  if (!value) return null;
+  try {
+    assertServiceCredential(name, value);
+  } catch (err) {
+    asEnvError(err);
   }
-  if (value.length < minLength) {
-    throw new EnvError(`${name} must be at least ${minLength} characters (got ${value.length})`)
-  }
-  return value
+  return value;
 }
 
 function optional(source: Source, name: string, fallback: string): string {
@@ -243,7 +247,7 @@ export function loadEnv(source: Source = process.env, host = ''): Env {
     identityUrl: optional(source, 'IDENTITY_URL', required(source, 'IDENTITY_ISSUER')),
     // Not `requiredSecret`: see the field comment. The absence is caught by `/readyz`, which is
     // a check that can fail, rather than by a boot CI cannot perform.
-    identityCredential: optionalSecret(source, 'NDA_IDENTITY_CREDENTIAL'),
+    identityCredential: optionalCredential(source, 'NDA_IDENTITY_CREDENTIAL'),
     legacyServiceTokenPresent: (source['NDA_SERVICE_TOKEN']?.trim() ?? '').length > 0,
     upstreamDeadlineMs: integer(source, 'NDA_UPSTREAM_DEADLINE_MS', 5_000, 100, 60_000),
 
