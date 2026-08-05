@@ -33,12 +33,18 @@ jobs:
       port: 4110
       # The image startup smoke test boots the real service, and `env.ts` validates its
       # configuration at import — so the container needs the variables it declares, not just a
-      # database. CI-only NON-secrets: throwaway tokens that clear a length check, URLs that are
-      # never dialled because /livez needs no upstream. Never a real credential.
+      # database. CI-only NON-secrets: URLs that are never dialled because /livez needs no
+      # upstream, and a legacy token that is only ever DETECTED. Never a real credential.
+      #
+      # The signing secret is no longer "a throwaway that clears a length check" — that is exactly
+      # what `ci-only-not-a-real-secret-000000000000` was, and the boot guard now refuses it
+      # (micro-org #142). `@generate` asks service-ci.yml for a fresh `openssl rand -base64 48` per
+      # run, thrown away afterwards: CI does not need a WEAK secret, it needs A secret, and nothing
+      # in the smoke test verifies a signature against anything else.
       smoke-env: |
         IDENTITY_JWKS_URL=http://127.0.0.1:4001/.well-known/jwks.json
         IDENTITY_ISSUER=http://127.0.0.1:4001
-        OUTBOX_SIGNING_SECRET=ci-only-not-a-real-secret-000000000000
+        OUTBOX_SIGNING_SECRET=@generate
         BILLING_URL=http://127.0.0.1:4009
         WORLDS_URL=http://127.0.0.1:4000
         NDA_SERVICE_TOKEN=ci-only-not-a-real-token-0000000000000
@@ -72,11 +78,28 @@ jobs:
       NDA_DATABASE_URL: postgres://nda:nda@127.0.0.1:5432/nda_test
       IDENTITY_JWKS_URL: http://127.0.0.1:4001/.well-known/jwks.json
       IDENTITY_ISSUER: http://127.0.0.1:4001
-      OUTBOX_SIGNING_SECRET: ci-only-not-a-real-secret-000000000000
       BILLING_URL: http://127.0.0.1:4009
       WORLDS_URL: http://127.0.0.1:4000
       NDA_SERVICE_TOKEN: ci-only-not-a-real-token-0000000000000
+      # OUTBOX_SIGNING_SECRET is deliberately NOT here — see the first step below.
     steps:
+      # THE SIGNING SECRET IS GENERATED, not written into the mapping above.
+      #
+      # `@generate` is a feature of service-ci.yml's `smoke-env` input and nothing substitutes it
+      # in a bespoke job's `env:`, so a literal here would reach the migrator as written — and the
+      # boot guard refuses `ci-only-not-a-real-secret-000000000000`, which is what used to sit
+      # there (micro-org #142). `src/migrator.ts` imports `src/env.ts`, so this job validates the
+      # variable too and would exit 1 before touching the schema.
+      #
+      # Generated per run and thrown away. Masked before it is written, so a later step that dumps
+      # its environment cannot put it in the log; nothing here ever prints it.
+      - name: A real signing secret, for this run only
+        run: |
+          set -euo pipefail
+          secret="$(openssl rand -base64 48)"
+          echo "::add-mask::$secret"
+          echo "OUTBOX_SIGNING_SECRET=$secret" >> "$GITHUB_ENV"
+
       # Temporary: the second checkout exists only because the runtime packages are unpublished.
       - uses: actions/checkout@v4
         with: { path: nda }

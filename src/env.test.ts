@@ -6,13 +6,18 @@
 // test that these values suffice. `loadEnv` is otherwise pure over its source.
 
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 import test from 'node:test';
 
 const BASE: Record<string, string> = {
   NDA_DATABASE_URL: 'postgres://nda:nda@127.0.0.1:5432/nda',
   IDENTITY_JWKS_URL: 'http://id/.well-known/jwks.json',
   IDENTITY_ISSUER: 'http://id',
-  OUTBOX_SIGNING_SECRET: 'a-real-secret-of-sufficient-length-000',
+  // GENERATED, never written. The boot guard refuses a typed value, and the former fixture here —
+  // `a-real-secret-of-sufficient-length-000` — is precisely the kind of string that claimed to be
+  // a secret and was not. A fixture exempt from the rule it exercises is how the placeholder in
+  // micro-org #142 survived every test in the estate.
+  OUTBOX_SIGNING_SECRET: randomBytes(48).toString('base64'),
   BILLING_URL: 'http://billing',
   WORLDS_URL: 'http://worlds',
 };
@@ -62,9 +67,53 @@ test('env: a CHANGE_ME placeholder secret is refused', () => {
   );
 });
 
-test('env: a short secret is refused (an entropy proxy)', () => {
+test('env: a short secret is refused — and for the key, the unit is DECODED BYTES', () => {
+  // The credential is an opaque value identity minted, so length is still the only proxy available
+  // for it. The signing key is generated, so it is measured in what an HMAC key is actually made
+  // of: 32 characters of prose is not 32 bytes of key.
   assert.throws(() => loadEnv({ ...BASE, NDA_IDENTITY_CREDENTIAL: 'short' }), EnvError);
-  assert.throws(() => loadEnv({ ...BASE, OUTBOX_SIGNING_SECRET: 'abc' }), EnvError);
+  assert.throws(
+    () => loadEnv({ ...BASE, OUTBOX_SIGNING_SECRET: 'abc' }),
+    (err: unknown) => err instanceof EnvError && /bytes of key material/.test(err.message),
+  );
+});
+
+test('THE VALUE THAT SAT IN A PUBLIC REPOSITORY IS REFUSED, and every near miss with it', () => {
+  // micro-org #142. Each of these cleared the old guard — a deny-list of exact strings plus a
+  // 24-character floor — and each is a real string that was deployed or set in CI, not an invented
+  // one. If a future edit weakens the floor, it fails against evidence rather than against taste.
+  //
+  // This key does not only sign here: `POST /v1/events` VERIFIES `identity.user.deleted` against
+  // it, and that handler erases an account's link to every survivor it has in every world.
+  for (const value of [
+    'estate-only-outbox-secret-00000000000000', // 54 lines of a PUBLIC compose file, 40 chars
+    'ci-only-not-a-real-secret-000000000000', // this repository's own CI, in two places
+    'K2sN4vQ8xR1wB6tY9zL3mF7hC5jD0pA4', // 32 chars, 24 bytes: right alphabet, too little key
+    '0'.repeat(64), // right alphabet, right length, no entropy
+  ]) {
+    assert.throws(
+      () => loadEnv({ ...BASE, OUTBOX_SIGNING_SECRET: value }),
+      (err: unknown) => {
+        // The refusal must not echo the value: the reason this guard exists is that the value was
+        // readable, and a message carrying it moves the secret to the log collector.
+        const message = (err as Error).message;
+        assert.ok(!message.includes(value), 'the refusal echoed the value');
+        assert.match(message, /OUTBOX_SIGNING_SECRET/);
+        assert.match(message, /openssl rand -base64 48/);
+        // Re-wrapped into this file's own class, so `loadEnv` still raises exactly one thing.
+        return err instanceof EnvError;
+      },
+    );
+  }
+});
+
+test('env: what the estate actually runs is accepted, in either alphabet', () => {
+  assert.doesNotThrow(() =>
+    loadEnv({ ...BASE, OUTBOX_SIGNING_SECRET: randomBytes(48).toString('base64') }),
+  );
+  assert.doesNotThrow(() =>
+    loadEnv({ ...BASE, OUTBOX_SIGNING_SECRET: randomBytes(32).toString('hex') }),
+  );
 });
 
 test('env: an out-of-range number is refused rather than clamped', () => {

@@ -8,8 +8,10 @@
  *
  * Two behaviours are deliberate estate house style:
  *   1. A missing variable names itself (rather than surfacing as an unreadable driver error later).
- *   2. A known placeholder is refused outright — a default secret that boots is a default secret
- *      that reaches production.
+ *   2. A secret that is not SHAPED like a generated one is refused outright — a placeholder that
+ *      boots is a placeholder that reaches production. The rule is `@cloudsforge/secrets`, shared
+ *      with the whole estate, and it replaced a per-service deny-list that could not fail: see
+ *      `requiredSigningSecret` below and micro-org #142.
  *
  * The ancestor read `GAME_DATABASE_URL`, `NIMBUS_JWKS_URL`, `NIMBUS_ISSUER`, `PAY_API_URL`,
  * `CORS_ORIGINS`, `TRUST_PROXY`, `GAME_PORT` and `GAME_RATE_LIMIT_MAX`
@@ -25,6 +27,7 @@
  */
 
 import { hostname } from 'node:os';
+import { assertGeneratedSecret, SecretError } from '@cloudsforge/secrets';
 
 /** This service's own name. A constant — a property of the repository, not the deployment. */
 export const SERVICE = 'nda';
@@ -37,6 +40,11 @@ export class EnvError extends Error {
   }
 }
 
+/**
+ * Placeholders refused in an OPAQUE credential — a value identity minted, which is not generated
+ * key material and cannot be held to the base64/hex shape below. The estate's event-bus HMAC key
+ * is NOT checked against this list any more: see `requiredSigningSecret`.
+ */
 const PLACEHOLDERS = new Set([
   'changeme',
   'change_me',
@@ -57,13 +65,48 @@ function required(source: Source, name: string): string {
   return value;
 }
 
-function requiredSecret(source: Source, name: string, minLength = 24): string {
+/**
+ * `@cloudsforge/secrets` raises `SecretError`; this file's contract is that `loadEnv` raises
+ * `EnvError`, and every test and caller in this repository is written to that.
+ *
+ * So the shape failures are re-wrapped rather than rethrown, and the message is carried across
+ * VERBATIM: it already names the variable and the command that fixes it, and by construction it
+ * contains no part of the value. Only the class changes, so there is one thing to catch here and
+ * nothing to re-derive by matching on text.
+ */
+function asEnvError(err: unknown): never {
+  throw err instanceof SecretError ? new EnvError(err.message) : err;
+}
+
+/**
+ * The estate's shared event-bus HMAC key, held to a SHAPE rather than to a deny-list.
+ *
+ * This service does not merely sign with it: it VERIFIES inbound deliveries on `POST /v1/events`
+ * against it, and one of the two topics that arrive there is `identity.user.deleted`, which erases
+ * an account's link to every survivor it has in every world. A forgeable key is an anonymous
+ * erasure endpoint.
+ *
+ * The `requiredSecret` this replaced could not fail. It refused a fixed list of exact strings and
+ * anything under 24 characters, and the value that sat on 54 lines of a PUBLIC compose file —
+ * `estate-only-outbox-secret-00000000000000` — was on no list and was 40 characters, so it passed
+ * every service in the estate (micro-org #142). A check that cannot fail is worse than no check,
+ * because the absence of an alarm gets read as the absence of a problem.
+ *
+ * `assertGeneratedSecret` asserts what a placeholder cannot have: the base64 or hex alphabet (no
+ * hyphens — every placeholder this estate wrote had one), 32 decoded BYTES rather than 24
+ * keystrokes, and a measured Shannon entropy floor. It has no NODE_ENV exemption and no escape
+ * hatch, so CI generates a real value per run rather than being let through.
+ *
+ * `required` rather than a length check first, deliberately: the weaker checks are a strict subset
+ * of the stronger ones, and running them first would answer a 40-character placeholder with "must
+ * be at least 24 characters" — true, useless, and pointing the operator at the wrong property.
+ */
+function requiredSigningSecret(source: Source, name: string): string {
   const value = required(source, name);
-  if (PLACEHOLDERS.has(value.toLowerCase())) {
-    throw new EnvError(`${name} is set to a known placeholder — generate a real secret`);
-  }
-  if (value.length < minLength) {
-    throw new EnvError(`${name} must be at least ${minLength} characters (got ${value.length})`);
+  try {
+    assertGeneratedSecret(name, value);
+  } catch (err) {
+    asEnvError(err);
   }
   return value;
 }
@@ -192,7 +235,7 @@ export function loadEnv(source: Source = process.env, host = ''): Env {
     databasePoolMax: integer(source, 'NDA_DATABASE_POOL_MAX', 10, 1, 100),
     identityJwksUrl: required(source, 'IDENTITY_JWKS_URL'),
     identityIssuer: required(source, 'IDENTITY_ISSUER'),
-    outboxSigningSecret: requiredSecret(source, 'OUTBOX_SIGNING_SECRET'),
+    outboxSigningSecret: requiredSigningSecret(source, 'OUTBOX_SIGNING_SECRET'),
     instanceId: optional(source, 'INSTANCE_ID', host || 'unknown'),
 
     billingUrl: required(source, 'BILLING_URL'),
