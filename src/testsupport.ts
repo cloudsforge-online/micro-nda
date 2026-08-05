@@ -337,13 +337,25 @@ export function asDb(sql: postgres.Sql): Db {
 }
 
 /** Sign an envelope the way a producer's relay would, for the inbound-webhook tests. */
+/**
+ * A delivery signed the way the ESTATE signs one, not the way this repository used to.
+ *
+ * `signDelivery` from `@cloudsforge/contracts-events` is the exact function every outbox relay
+ * calls (`identity/src/outbox.ts:325`), so a test built on it exercises the bytes and the header
+ * name a real producer sends. It used to call this repository's own `signEvent`, which produced
+ * `x-cloudsforge-signature: sha256=<hmac>` — a format nothing in the estate emits — so the inbound
+ * route was only ever tested against a producer that does not exist.
+ *
+ * The header NAME is returned alongside the value for the same reason: a test that hardcodes it is
+ * a test that keeps passing after the route stops agreeing with the estate.
+ */
 export async function signedEvent(
   secret: string,
   envelope: Record<string, unknown>,
-): Promise<{ body: string; signature: string }> {
-  const { signEvent } = await import('./outbox.ts');
+): Promise<{ body: string; signature: string; header: string }> {
+  const { SIGNATURE_HEADER, signDelivery } = await import('@cloudsforge/contracts-events');
   const body = JSON.stringify(envelope);
-  return { body, signature: signEvent(body, secret) };
+  return { body, signature: signDelivery(body, secret), header: SIGNATURE_HEADER };
 }
 
 /* ------------------------------------------------------------------ world fixtures */

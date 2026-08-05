@@ -379,6 +379,47 @@ export const MIGRATIONS: readonly Migration[] = [
       create index if not exists world_events_world_idx on world_events (world_id, day desc);
     `,
   },
+
+  {
+    version: 6,
+    name: 'erasure-is-final',
+    up: `
+      -- ════════════════════════════════════════════════════════════════════════════════════════
+      -- AN ERASED SURVIVOR MAY NOT BE RE-ATTACHED TO AN ACCOUNT.
+      --
+      -- \`src/erasure.ts\` sets \`handle\` to the tombstone and \`user_id\` to null in one statement,
+      -- and that is the whole of GDPR erasure for this service. The hazard is not that the handler
+      -- is wrong today; it is that erasure leaves a row which still LOOKS like a joinable survivor
+      -- — same primary key, same world, same commune membership — so any later write path that
+      -- sets \`user_id\` from a player id would silently re-attribute a person's game to them.
+      --
+      -- The realistic ways that happens are all boring: a rejoin path that upserts on
+      -- \`players.id\` instead of \`(world_id, user_id)\`, a support script "fixing" an orphaned
+      -- survivor, a partial restore that replays a pre-erasure row. None of them is malicious and
+      -- none of them would fail a test.
+      --
+      -- So the invariant is structural, and it is one direction only: a row carrying the tombstone
+      -- handle carries no account. The reverse — "a null user_id implies the tombstone" — is
+      -- deliberately NOT stated, because bots are \`players\` rows with a null \`user_id\` and their
+      -- own names, and \`players_bot_has_no_user\` above already records why the two-directional
+      -- form of that rule is the one that breaks erasure.
+      -- ════════════════════════════════════════════════════════════════════════════════════════
+      do $$ begin
+        alter table players add constraint players_erased_stays_erased
+          check (handle <> 'a departed settler' or user_id is null);
+      exception when duplicate_object then null; end $$;
+
+      -- Erasure rewrites denormalised copies of the handle in \`reports\`, scoped to the worlds the
+      -- survivor played in. Without this the rewrite is a sequential scan of every report in the
+      -- world; with it the handle columns are looked up directly. The free-text \`message\` rewrite
+      -- still scans, which is accepted: it is bounded by one world and runs once per account.
+      create index if not exists reports_actor_handle_idx on reports (world_id, actor_handle)
+        where actor_handle is not null;
+      create index if not exists reports_target_handle_idx on reports (world_id, target_handle)
+        where target_handle is not null;
+      create index if not exists communes_founder_idx on communes (world_id, founder_handle);
+    `,
+  },
 ];
 
 /** The version this build requires. `index.ts` asserts it at boot and refuses to serve below it. */

@@ -6,7 +6,9 @@
   "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@11.9.0",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node --import tsx src/index.ts",
     "migrate": "node --import tsx src/migrator.ts",
@@ -31,6 +33,7 @@
   "dependencies": {
     "@cloudsforge/auth": "link:../runtime/packages/auth",
     "@cloudsforge/contracts-auth": "link:../contracts/packages/auth",
+    "@cloudsforge/contracts-events": "link:../contracts/packages/events",
     "@cloudsforge/contracts-worlds": "link:../contracts/packages/worlds",
     "@cloudsforge/db": "link:../runtime/packages/db",
     "@cloudsforge/http": "link:../runtime/packages/http",

@@ -31,7 +31,8 @@ import {
 } from './testsupport.ts';
 import { buildRoutes, createServer, type PrincipalVerifier } from './server.ts';
 import { withOutbox } from './outbox.ts';
-import { playerOf, resolveWorldDay } from './worlds.ts';
+import { playerOf, queueActions, resolveWorldDay } from './worlds.ts';
+import { foundCommune } from './communes.ts';
 
 const SIGNING_SECRET = 'a-real-signing-secret-of-good-length';
 
@@ -316,21 +317,23 @@ test('server: an event with no signature is refused before it is parsed', { skip
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ id: '11111111-1111-4111-8111-111111111111', topic: 'x' }),
   });
-  assert.equal(res.status, 401);
+  // 403, not 401. This is not a bearer surface: the MAC is the credential, and answering 401
+  // invites a caller to go and find a token that would not help them.
+  assert.equal(res.status, 403);
 });
 
 test('server: an event signed with the wrong secret is refused', { skip }, async () => {
-  const { body, signature } = await signedEvent('the-wrong-secret-entirely-0000', {
+  const { body, signature, header } = await signedEvent('the-wrong-secret-entirely-0000', {
     id: '11111111-1111-4111-8111-111111111111',
     topic: 'identity.user.deleted',
     payload: {},
   });
   const res = await fetch(`${base}/v1/events`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-cloudsforge-signature': signature },
+    headers: { 'content-type': 'application/json', [header]: signature },
     body,
   });
-  assert.equal(res.status, 401);
+  assert.equal(res.status, 403);
 });
 
 test(
@@ -341,21 +344,60 @@ test(
     // user_id. The survivor is NOT deleted: a world's history is other players' history too, the
     // raids they survived and the trades they made. What goes is the link to the account.
     const { worldId, playerIds } = await seedWorld(sql, { seed: 'erasure' });
+
+    // The survivor must actually DO something before the day resolves, or the only report the
+    // engine writes is the world summary — which carries no handle at all, and an erasure test
+    // built on that fixture asserts nothing. A single `work` action produces a report with
+    // `actor_handle = 'alice'` AND a message reading "alice worked the homestead"
+    // (`engine/resolve.ts:379`), which is the denormalisation this test exists to catch.
+    await queueActions(
+      asDb(sql),
+      'nda',
+      { worldId, userId: ALICE, actions: [{ type: 'work' }] },
+      withOutbox,
+    );
+    // Founding a commune denormalises the handle a second way, into `communes.founder_handle`.
+    await foundCommune(
+      asDb(sql),
+      'nda',
+      { worldId, playerId: playerIds[0]!, name: 'the last holdouts' },
+      withOutbox,
+    );
     await resolveWorldDay(asDb(sql), 'nda', worldId, new Date(), withOutbox);
+
+    const [seeded] = await sql<{ n: number }[]>`
+      select (
+        (select count(*) from reports
+          where world_id = ${worldId}
+            and (actor_handle = 'alice' or position('alice' in message) > 0))
+      + (select count(*) from communes where world_id = ${worldId} and founder_handle = 'alice')
+      )::int as n`;
+    assert.ok(seeded!.n > 0, 'the fixture wrote no denormalised handle, so this test proves nothing');
+
     const [before] = await sql<{ n: number }[]>`
       select count(*)::int as n from reports where world_id = ${worldId}`;
     assert.ok(before!.n > 0);
 
+    // ── THE PAYLOAD `identity` ACTUALLY SENDS ────────────────────────────────────────────
+    // `{ userId, tombstoneAt, reason }`, with the envelope key set to the bare user id —
+    // `identity/src/deletion.ts:113-125`. This test used to send `{ subject: 'user:<uuid>' }`,
+    // a shape identity has never emitted, and the handler read `subject`. Both agreed with each
+    // other and neither agreed with the producer, so the test passed while every real deletion
+    // erased nothing and answered 202.
     const envelope = {
       id: '22222222-2222-4222-8222-222222222222',
       topic: 'identity.user.deleted',
       key: ALICE,
-      payload: { subject: `user:${ALICE}` },
+      payload: {
+        userId: ALICE,
+        tombstoneAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+        reason: 'user_requested',
+      },
     };
-    const { body, signature } = await signedEvent(SIGNING_SECRET, envelope);
+    const { body, signature, header } = await signedEvent(SIGNING_SECRET, envelope);
     const res = await fetch(`${base}/v1/events`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-cloudsforge-signature': signature },
+      headers: { 'content-type': 'application/json', [header]: signature },
       body,
     });
     assert.equal(res.status, 202);
@@ -370,10 +412,36 @@ test(
       select count(*)::int as n from reports where world_id = ${worldId}`;
     assert.equal(after!.n, before!.n, "erasure destroyed other players' history");
 
+    // ── THE HANDLE IS DENORMALISED, AND ERASING ONLY `players` LEAVES IT EVERYWHERE ──────
+    // A self-chosen handle is personal data. The resolution engine copies it into
+    // `reports.actor_handle`, `reports.target_handle`, `communes.founder_handle` and into the
+    // free text of `reports.message` and `world_events.description`. Nulling `user_id` while
+    // leaving "alice raided bob" in a herald line is a rename, not an erasure.
+    const [leaks] = await sql<{ n: number }[]>`
+      select (
+        (select count(*) from reports
+          where world_id = ${worldId}
+            and (actor_handle = 'alice' or target_handle = 'alice'
+                 or position('alice' in message) > 0))
+      + (select count(*) from communes where world_id = ${worldId} and founder_handle = 'alice')
+      + (select count(*) from world_events
+          where world_id = ${worldId}
+            and (position('alice' in title) > 0 or position('alice' in description) > 0))
+      )::int as n`;
+    assert.equal(leaks!.n, 0, 'a denormalised copy of the handle survived erasure');
+
+    // The schema refuses to let an erased survivor be re-attached to an account, whatever the
+    // code path — `players_erased_stays_erased`, migration 6.
+    await assert.rejects(
+      () => sql`update players set user_id = ${ALICE} where id = ${playerIds[0]!}`,
+      /players_erased_stays_erased/,
+      'an erased survivor could be re-attributed to an account',
+    );
+
     // A redelivery of the same event is deduped on (topic, event_id) and does nothing.
     const again = await fetch(`${base}/v1/events`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-cloudsforge-signature': signature },
+      headers: { 'content-type': 'application/json', [header]: signature },
       body,
     });
     assert.equal(again.status, 202);
@@ -382,14 +450,14 @@ test(
 );
 
 test('server: an event on a topic we do not subscribe to is acknowledged and ignored', { skip }, async () => {
-  const { body, signature } = await signedEvent(SIGNING_SECRET, {
+  const { body, signature, header } = await signedEvent(SIGNING_SECRET, {
     id: '33333333-3333-4333-8333-333333333333',
     topic: 'market.listing.created',
     payload: {},
   });
   const res = await fetch(`${base}/v1/events`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-cloudsforge-signature': signature },
+    headers: { 'content-type': 'application/json', [header]: signature },
     body,
   });
   assert.equal(res.status, 202);

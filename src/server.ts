@@ -31,7 +31,7 @@
  *                                     later", never "wear it anyway".
  */
 
-import { timingSafeEqual } from 'node:crypto';
+
 import {
   createServer as createHttpServer,
   type IncomingMessage,
@@ -50,7 +50,9 @@ import {
 import type { Lifecycle } from '@cloudsforge/lifecycle';
 import { Metrics, newRequestId, type Logger } from '@cloudsforge/telemetry';
 import type { JobQueue } from '@cloudsforge/jobs';
-import { signEvent, withInbox, withOutbox, type Db } from './outbox.ts';
+import { SIGNATURE_HEADER, verifyDelivery } from '@cloudsforge/contracts-events';
+import { withInbox, withOutbox, type Db } from './outbox.ts';
+import { erasePlayers } from './erasure.ts';
 import type { EntitlementReader } from './billingclient.ts';
 import {
   IdempotencyInFlightError,
@@ -169,7 +171,6 @@ export function registerServiceMetrics(metrics: Metrics): Metrics {
 
 const SAFE_REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const MAX_BODY_BYTES = 256 * 1024;
-const SIGNATURE_HEADER = 'x-cloudsforge-signature';
 const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
 interface Reply {
@@ -428,12 +429,40 @@ export function buildRoutes(): Route[] {
     /* ------------------------------------------------------------- the inbound webhook */
 
     defineMutation('POST', '/v1/events', 'inbox', async (ctx, deps) => {
+      // ══════════════════════════════════════════════════════════════════════════════════════
+      // **THE ESTATE'S DELIVERY SCHEME, NOT THIS REPOSITORY'S OWN.**
+      //
+      // This verified `x-cloudsforge-signature: sha256=<hmac>`, a format invented here. Every
+      // producer in the estate sends `cf-signature: t=<unix>,v1=<hmac>` and nothing else —
+      // `identity/src/outbox.ts:325` is the canonical relay, and `SIGNATURE_HEADER` in
+      // `contracts/packages/events/src/index.ts:1397` is the name it sends it under. So a
+      // correctly signed `identity.user.deleted` arrived with no header this route looked at and
+      // was refused, every time. The subscription could never have worked, which is why the
+      // erasure handler below had never run against a real delivery.
+      //
+      // The estate scheme is also strictly stronger than the one it replaces: it binds a
+      // timestamp into the MAC and `verifyDelivery` refuses a stale or future one, so a captured
+      // delivery cannot be replayed. The local scheme had no replay window at all.
+      //
+      // `signEvent` stays for the OUTBOUND relay in `outbox.ts`, which still signs this way to
+      // its own subscribers. That is a separate defect in a separate direction and it is reported
+      // rather than fixed here, because changing what this service EMITS is not erasure work.
+      //
+      // Order is the security property: read the raw bytes, verify over exactly those bytes, and
+      // only then parse. 403 rather than 401 — this is not a bearer surface, and answering 401
+      // invites a caller to go and find a token. The MAC is the credential.
+      // ══════════════════════════════════════════════════════════════════════════════════════
       const raw = await readRaw(ctx.req);
       const presented = headerOf(ctx.req, SIGNATURE_HEADER);
-      if (!presented || !verifySignature(raw, deps.eventSigningSecret, presented)) {
+      const verification = presented
+        ? verifyDelivery(raw.toString('utf8'), presented, deps.eventSigningSecret)
+        : ({ ok: false, reason: 'malformed_header' } as const);
+      if (!verification.ok) {
         deps.metrics.increment('nda_events_rejected_total', { reason: 'bad_signature' });
-        ctx.log.warn('an inbound event failed its signature check');
-        return errorReply(401, 'bad_signature', 'the event signature did not verify', ctx.requestId);
+        // The reason is logged, never returned: telling a prober "stale" rather than "mismatch"
+        // tells them which half of a forgery to fix.
+        ctx.log.warn('an inbound event failed its signature check', { reason: verification.reason });
+        return errorReply(403, 'bad_signature', 'the event signature did not verify', ctx.requestId);
       }
 
       let envelope: Record<string, unknown>;
@@ -471,27 +500,36 @@ export function buildRoutes(): Route[] {
         const outcome = await withInbox(deps.sql, topic, eventId, async (tx) => {
           if (topic !== DELETED_TOPIC) return { erased: 0 };
           // ─────────────────────────────────────────────────────────────────────────────────
-          // GDPR erasure — 17-definition-of-done §2 makes this non-optional for any service
-          // storing a user_id, and this service stores one on every human survivor.
+          // GDPR erasure. The reasoning, and the per-table decision behind it, is the header of
+          // `src/erasure.ts` — in the code, next to the behaviour, so the two cannot drift.
           //
-          // The survivor is NOT deleted. A world's history is other players' history too: the
-          // raids they survived, the trades they made, the commune they founded. What is erased
-          // is the link to the account and the handle that names them. The row becomes an
-          // anonymous settler, the simulation is untouched, and nothing in the estate can join
-          // it back to a person.
+          // ── THE FIELD IS `userId`, AND READING `subject` ERASED NOBODY ──────────────────
+          //
+          // This read `payload.subject` and fell through to `{ erased: 0 }` when it was absent.
+          // `identity` has never sent a `subject`: `identity/src/deletion.ts:113-125` emits
+          // `payload: { userId, tombstoneAt, reason }` with the envelope `key` set to the bare
+          // user id. So every real deletion answered 202 `accepted`, wrote an inbox row saying
+          // it had been handled, and left the account link in place — the failure mode that
+          // looks exactly like compliance from the outside.
+          //
+          // It went unnoticed because `server.test.ts` built its own envelope carrying
+          // `subject`, so the test asserted the handler against a contract that does not exist.
+          // The test now sends what `identity` sends.
           // ─────────────────────────────────────────────────────────────────────────────────
-          const subject = typeof payload['subject'] === 'string' ? payload['subject'] : '';
-          const userId = subject.startsWith('user:') ? subject.slice('user:'.length) : subject;
-          if (!userId) return { erased: 0 };
-          const erased = await tx<{ id: string }[]>`
-            update players
-               set user_id = null, handle = 'a departed settler', cosmetic_style = null
-             where user_id = ${userId}
-            returning id`;
-          return { erased: erased.length };
+          const named = typeof payload['userId'] === 'string' ? payload['userId'] : '';
+          // `identity` sends a bare uuid. The `user:<uuid>` ledger spelling is stripped anyway,
+          // explicitly rather than by accident, because `players.user_id` holds the bare form and
+          // a prefixed value would match no row while still reporting success.
+          const userId = named.startsWith('user:') ? named.slice('user:'.length) : named;
+          if (!UUID.test(userId)) {
+            throw new BadRequestError('identity.user.deleted requires a uuid userId');
+          }
+          const result = await erasePlayers(tx, userId);
+          return { erased: result.players, ...result };
         });
         if (outcome.status === 'duplicate') return { status: 202, body: { status: 'duplicate' } };
         if (topic === DELETED_TOPIC && outcome.value.erased > 0) {
+          // Counts and column names only — never the handle, never the user id.
           ctx.log.info('erased an account from its worlds', { survivors: outcome.value.erased });
         }
         return { status: 202, body: { status: 'accepted' } };
@@ -1217,13 +1255,6 @@ function parseActions(value: unknown): QueuedAction[] {
         throw new BadRequestError(`actions[${i}] has unknown type '${String(a['type'])}'`);
     }
   });
-}
-
-function verifySignature(body: Buffer, secret: string, presented: string): boolean {
-  const expected = Buffer.from(signEvent(body.toString('utf8'), secret));
-  const actual = Buffer.from(presented);
-  if (expected.length !== actual.length) return false;
-  return timingSafeEqual(expected, actual);
 }
 
 async function readRaw(req: IncomingMessage): Promise<Buffer> {
