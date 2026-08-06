@@ -31,8 +31,8 @@ title, description and severity; and every report's kind, visibility, message, a
 reader.
 
 **Two columns are not compared, and cannot be.** `reports.id` and `world_events.id` were
-`randomUUID()` in the ancestor (`services/game/src/engine/resolve.ts:827`,
-`services/game/src/engine/events.ts:112`). They do not match a second run of the *ancestor* either.
+`randomUUID()` in the ancestor (`services/game/src/engine/resolve.ts`,
+`services/game/src/engine/events.ts`). They do not match a second run of the *ancestor* either.
 This port derives both instead — `${worldId}:${day}:${ordinal}` and `${worldId}:${day}:${type}` —
 so a resolved day is now comparable row-for-row with a replay of it, which is what let the corpus
 assert on the whole result rather than on a chosen subset. `src/engine.test.ts` asserts that
@@ -59,7 +59,7 @@ arithmetic can hide is a corpus that proves very little.
 
 ### 1. World event severity can be zero, or negative
 
-`services/game/src/engine/events.ts:130`:
+`services/game/src/engine/events.ts`:
 
 ```js
 const severity = 1 + ((h >> 8) % baseSeverity)
@@ -85,17 +85,17 @@ fails in **both** directions, so a fix has to arrive as a decision rather than a
 
 ### 2. The upkeep loop's order depended on the query plan
 
-`services/game/src/engine/resolve.ts:116` read the roster with a bare `db.select()` and no
-`ORDER BY`, then `resolve.ts:503` iterated that result for upkeep. Most of upkeep is per-player and
+`services/game/src/engine/resolve.ts` read the roster with a bare `db.select()` and no
+`ORDER BY`, then `resolve.ts` iterated that result for upkeep. Most of upkeep is per-player and
 order-blind, but the disease relief draws from the world's finite medicine pool first-come — so with
 fewer units than sufferers, *which* survivor was resupplied depended on the plan Postgres happened
-to pick. The action loop already sorted (`resolve.ts:246`); this port extends the same total order
+to pick. The action loop already sorted (`resolve.ts`); this port extends the same total order
 (oldest homestead, ties on id) to the rest of the day, and `src/engine.test.ts` asserts that
 reversing the input roster does not change the day.
 
 ### 3. A `setInterval` guarded by a module-local variable
 
-`services/game/src/engine/tick.ts:11` guards concurrent ticks with `const ticking = new Set<string>()`
+`services/game/src/engine/tick.ts` guards concurrent ticks with `const ticking = new Set<string>()`
 — a variable that is, by construction, invisible to a second process. Correct with exactly one
 replica. With two, both sweeps see the same due worlds. See "Two workers, one day" below.
 
@@ -107,14 +107,14 @@ replica. With two, both sweeps see the same due worlds. See "Two workers, one da
 
 | Here | From | Notes |
 | --- | --- | --- |
-| `src/engine/resolve.ts` | `services/game/src/engine/resolve.ts:112-876` | The whole day. Now pure — see below. |
+| `src/engine/resolve.ts` | `services/game/src/engine/resolve.ts` | The whole day. Now pure — see below. |
 | `src/engine/trade.ts` | `services/game/src/engine/trade.ts` | Already pure; carried across essentially verbatim, rationale included. |
-| `src/engine/events.ts` | `services/game/src/engine/events.ts:94-173` | Ids derived rather than random; takes a seed rather than the world id. |
-| `src/engine/progression.ts` | `services/game/src/engine/progression.ts` | Plus `applyProgressDelta`, which the ancestor had inline at `resolve.ts:751-810`. |
+| `src/engine/events.ts` | `services/game/src/engine/events.ts` | Ids derived rather than random; takes a seed rather than the world id. |
+| `src/engine/progression.ts` | `services/game/src/engine/progression.ts` | Plus `applyProgressDelta`, which the ancestor had inline at `resolve.ts`. |
 | `src/engine/mapgen.ts` | `services/game/src/world/mapgen.ts` | Verbatim, including the two-draws-before-either-is-used ordering. |
 | `src/engine/homestead.ts` | `services/game/src/world/homestead.ts` | Verbatim, comments and all. |
-| `src/engine/bots.ts` | `services/game/src/engine/bots.ts:120-303` | The decision half; the database half moved to `src/worlds.ts`. |
-| `src/engine/rng.ts` | `events.ts:9-34`, `progression.ts:24-33` | FNV-1a, mulberry32, LCG Fisher–Yates. |
+| `src/engine/bots.ts` | `services/game/src/engine/bots.ts` | The decision half; the database half moved to `src/worlds.ts`. |
+| `src/engine/rng.ts` | `events.ts`, `progression.ts` | FNV-1a, mulberry32, LCG Fisher–Yates. |
 | `src/rules.ts` | `@cloudsforge/shared@0.4.0` `src/game.ts` | See "where the rules live". |
 | `src/communes.ts` | `services/game/src/routes/communes.ts`, `.../stipend.ts` | Handlers rewritten; the rules and their reasons are the ancestor's. |
 
@@ -122,8 +122,8 @@ replica. With two, both sweeps see the same due worlds. See "Two workers, one da
 
 | What | Was | Is | Why |
 | --- | --- | --- | --- |
-| Turn scheduling | `setInterval` + a module-local `Set` (`engine/tick.ts:46-72`) | a `world.tick` leased job keyed on `world_id` | Rule 8. A module-local guard cannot see a second process. |
-| Schema | `CREATE TABLE IF NOT EXISTS` in a loop from `index.ts` (`db/migrate.ts:226`) | versioned migrations, one-shot migrator under an advisory lock | Rule 7. You could not ask the old one which schema a container was serving. |
+| Turn scheduling | `setInterval` + a module-local `Set` (`engine/tick.ts`) | a `world.tick` leased job keyed on `world_id` | Rule 8. A module-local guard cannot see a second process. |
+| Schema | `CREATE TABLE IF NOT EXISTS` in a loop from `index.ts` (`db/migrate.ts`) | versioned migrations, one-shot migrator under an advisory lock | Rule 7. You could not ask the old one which schema a container was serving. |
 | HTTP | Fastify + `@fastify/cors` + `@fastify/rate-limit` | `node:http` and the estate router | House style; CORS and rate limiting are the edge's now. |
 | Data access | drizzle-orm | `postgres` template SQL | House style, and the constraints are in the migration where they can be tested. |
 | Auth | bespoke `jose` wrapper (`auth.ts`) | `@cloudsforge/auth` `Verifier` | Rule: use the runtime, do not reimplement. |
@@ -134,16 +134,16 @@ replica. With two, both sweeps see the same due worlds. See "Two workers, one da
 
 ### Dropped, on purpose
 
-- **`player_cosmetics`** (`services/game/src/db/schema.ts:158`). An account-level wardrobe keyed on
+- **`player_cosmetics`** (`services/game/src/db/schema.ts`). An account-level wardrobe keyed on
   `user_id` made a per-title game service the second registry of what an account owns.
-  `03-repository-responsibilities.md:168` assigns player identity, cosmetics and the entitlement
+  `03-repository-responsibilities.md` assigns player identity, cosmetics and the entitlement
   bridge to `worlds`. What survives here is `players.cosmetic_style` — which slot *this survivor in
   this world* is wearing something in, which is simulation state and is ours.
-- **CORS, the rate limiter, and `trust proxy`** (`services/game/src/env.ts:21-36`, `index.ts:44-50`).
+- **CORS, the rate limiter, and `trust proxy`** (`services/game/src/env.ts`, `index.ts`).
   The browser does not talk to this service directly any more; `worlds-web` is a separate repository
   and the edge terminates both. The ancestor's own comment there was apologising for a limiter keyed
   on a spoofable forwarded address.
-- **The three cosmetic kinds with nowhere to draw them.** `services/game/src/cosmetics.ts:16` kept
+- **The three cosmetic kinds with nowhere to draw them.** `services/game/src/cosmetics.ts` kept
   three of six for exactly this reason. `commune_crest` is added back because a commune has a roster
   page to draw one on; map banners and herald flair still do not.
 - **Any ledger client.** There is no `LEDGER_URL` and no `postEntry` anywhere. This service moves no
@@ -155,7 +155,7 @@ replica. With two, both sweeps see the same due worlds. See "Two workers, one da
 
 ### Added
 
-- **`worlds.seed`.** The ancestor used the world's id (`world/generate.ts:30` — "The world id is the
+- **`worlds.seed`.** The ancestor used the world's id (`world/generate.ts` — "The world id is the
   map seed"), so identity and reproducibility were one value and a world could not be re-seeded
   without becoming a different row. Defaulted to the id on the way in, so a world carried forward
   replays exactly.
@@ -167,7 +167,7 @@ replica. With two, both sweeps see the same due worlds. See "Two workers, one da
 
 ### Where the rules live
 
-`docs/ecosystem/03-repository-responsibilities.md:177` assigns `shared-libs/packages/shared/game.ts`
+`docs/ecosystem/03-repository-responsibilities.md` assigns `shared-libs/packages/shared/game.ts`
 to `cloudsforge-nda`, with the reason stated: *game rules are not a platform contract*. In the
 ancestor they were in `@cloudsforge/shared`, a package the wallet, the mint and the identity service
 all installed — so a balance tweak to the Farmer perk tree was a release all of them consumed. They
@@ -177,7 +177,7 @@ are in `src/rules.ts` now.
 
 ## Two workers, one day
 
-`04-domain-model.md:513` names the harm exactly: `world.tick`, keyed on `world_id`, prevents
+`04-domain-model.md` names the harm exactly: `world.tick`, keyed on `world_id`, prevents
 **"double XP and double days-survived"**. There are two defences, in order:
 
 1. **The lease.** `world.tick` is a leased job keyed on the world id, claimed

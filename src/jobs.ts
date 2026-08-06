@@ -3,7 +3,7 @@
  *
  * Rule 8 of docs/ecosystem/03 §2: every background timer is a leased job. There is no `setInterval`
  * in this repository doing domain work and CI greps for one. The ancestor's whole scheduler was a
- * `setInterval` guarded by a module-local boolean (`engine/tick.ts:46-72`) — correct with exactly
+ * `setInterval` guarded by a module-local boolean (`engine/tick.ts`) — correct with exactly
  * one replica, and with two, two sweeps see the same due worlds.
  *
  * **The lease key names the contended resource, not the row.** That single decision is where the
@@ -127,7 +127,7 @@ export function registerHandlers(runner: JobRunner, deps: JobDeps): void {
 
   runner.register<{ worldId?: string }>(WORLD_TICK_KIND, async (job: Job<{ worldId?: string }>) => {
     const worldId = job.payload.worldId ?? job.key;
-    // Bots first, then the day — the ancestor's order (`engine/tick.ts:23-24`). A day resolved
+    // Bots first, then the day — the ancestor's order (`engine/tick.ts`). A day resolved
     // before its bots have chosen is a day in which every bot stood still.
     await enqueueBotActions(deps.sql, worldId);
     const outcome = await resolveWorldDay(deps.sql, deps.producer, worldId, now(), withOutbox);

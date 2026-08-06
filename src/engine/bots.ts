@@ -1,12 +1,12 @@
 /**
  * What the bots do with their day. **Pure.**
  *
- * Ported from `ninety-days-after/services/game/src/engine/bots.ts:120-303`. The database half of
+ * Ported from `ninety-days-after/services/game/src/engine/bots.ts`. The database half of
  * that file — spawning a roster, freeing tiles, writing the queue — is `../worlds.ts`; what is
  * here is the decision, so it can be tested and replayed without one.
  *
  * The one substitution is that `pickRaidTarget` keys its stream on the world's `seed` rather than
- * its `id`. In the ancestor those were the same string (`world/generate.ts:30`), so a world
+ * its `id`. In the ancestor those were the same string (`world/generate.ts`), so a world
  * carried forward picks exactly the same prey.
  *
  * A bot's CONSENT is the part worth reading. Under the mirror-consent trade rule a bot has to be

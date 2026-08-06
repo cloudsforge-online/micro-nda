@@ -10,7 +10,7 @@
  *
  * 04-domain-model §10.5 names this exactly: `world.tick`, keyed on `world_id`, prevents "double XP
  * and double days-survived". The ancestor's only guard was a module-local `Set<string>` of
- * in-flight world ids (`engine/tick.ts:11`) — a variable which is, by construction, invisible to a
+ * in-flight world ids (`engine/tick.ts`) — a variable which is, by construction, invisible to a
  * second process. With one replica it was correct. With two it was a data-loss bug waiting for a
  * scale-up.
  *
@@ -112,7 +112,7 @@ export class ConflictError extends Error {
  * claimed a few statements earlier stays marked `homestead` and owned by a player that was never
  * created. `releaseHomestead` matches on `owner_id`, so nothing ever gives that tile back, and the
  * map leaks a homestead per lost race. That is the exact defect the ancestor's own comment
- * (`routes/worlds.ts:42-48`) describes, and this port re-introduced it by returning `null`; the
+ * (`routes/worlds.ts`) describes, and this port re-introduced it by returning `null`; the
  * test named "a lost join race leaves no tile owned by a survivor that was never created" is what
  * caught it. Caught immediately outside the transaction, so it never reaches the error handler.
  */

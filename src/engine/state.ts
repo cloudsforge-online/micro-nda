@@ -10,13 +10,13 @@
  * a thing a test can assert, and `conformance.test.ts` asserts it against a corpus recorded by
  * executing the frozen ancestor for real.
  *
- * The ancestor's `resolveDay` (`ninety-days-after/services/game/src/engine/resolve.ts:112`) opened
+ * The ancestor's `resolveDay` (`ninety-days-after/services/game/src/engine/resolve.ts`) opened
  * with seven `db.select()` calls and closed with a transaction, so the engine and its persistence
  * were the same function. Anything you wanted to know about how a day resolved, you learned by
  * running Postgres.
  *
  * `createdAt` is carried as an epoch-millisecond NUMBER rather than a `Date`. The ancestor's
- * resolution order is `createdAt` then `id` (`resolve.ts:248`), so the wall clock is a genuine
+ * resolution order is `createdAt` then `id` (`resolve.ts`), so the wall clock is a genuine
  * input to the simulation; making the caller supply it keeps the engine pure without changing the
  * order a single homestead acts in.
  */
@@ -36,7 +36,7 @@ export interface WorldSnapshot {
   readonly name: string;
   /**
    * The simulation seed. In the ancestor this was always the world's id
-   * (`world/generate.ts:30` — "The world id is the map seed"), so a world carried forward from
+   * (`world/generate.ts` — "The world id is the map seed"), so a world carried forward from
    * there sets `seed = id` and replays identically. Separating them means a world can be re-seeded
    * for a rerun without its rows changing identity.
    */
@@ -123,7 +123,7 @@ export interface PlayerResult {
  * What one resolved day ADDS to a player's progress row.
  *
  * Deltas, not absolutes — the ancestor's hard-won lesson, kept verbatim
- * (`resolve.ts:69-86`): the day is simulated from a snapshot of `player_progress` read before the
+ * (`resolve.ts`): the day is simulated from a snapshot of `player_progress` read before the
  * transaction opens — correct for the simulation, which must resolve against yesterday's perks —
  * but writing that snapshot back reverted anything the player did while the day was being
  * computed. An objective claimed or a skill point spent mid-tick vanished. So the row is re-read

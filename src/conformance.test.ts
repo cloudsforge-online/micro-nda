@@ -24,7 +24,7 @@
 // and every report's kind/visibility/message/actor/target/viewer.
 //
 // TWO COLUMNS ARE NOT COMPARED, and cannot be: `reports.id` and `world_events.id` were
-// `randomUUID()` in the ancestor (`resolve.ts:827`, `events.ts:112`). They do not match a second
+// `randomUUID()` in the ancestor (`resolve.ts`, `events.ts`). They do not match a second
 // run of the ANCESTOR either. This port derives both instead — see `resolve.ts` — and
 // `engine.test.ts` asserts that derivation is stable and collision-free. Saying so here rather
 // than quietly dropping them is the difference between a proof and a claim.

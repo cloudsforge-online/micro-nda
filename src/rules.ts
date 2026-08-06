@@ -3,7 +3,7 @@
  *
  * ## Why this is here and not in a contract package
  *
- * 03-repository-responsibilities.md:177 assigns `shared-libs/packages/shared/game.ts` to
+ * 03-repository-responsibilities.md assigns `shared-libs/packages/shared/game.ts` to
  * **`cloudsforge-nda`**, with the reason stated: *game rules are not a platform contract*. In the
  * ancestor these lived in `@cloudsforge/shared@0.4.0`, a package every service in the estate
  * installed — so a balance tweak to the Farmer perk tree was a release of the library that the
@@ -19,7 +19,7 @@
  * into evidence.
  *
  * The one addition is `RESOURCE_KEYS`-driven `sanitizeBag`/`hasResources`/`clampBag`, lifted from
- * `ninety-days-after/services/game/src/util.ts:33-50` — they are rules, they were merely filed
+ * `ninety-days-after/services/game/src/util.ts` — they are rules, they were merely filed
  * under utilities.
  */
 
@@ -49,7 +49,7 @@ export const emptyBag = (): ResourceBag => ({
   seeds: 0,
 });
 
-/** Starting resource bag handed to every fresh homestead. `util.ts:28-30`. */
+/** Starting resource bag handed to every fresh homestead. `util.ts`. */
 export const startingBag = (): ResourceBag => ({
   food: 12,
   water: 12,
@@ -60,7 +60,7 @@ export const startingBag = (): ResourceBag => ({
 });
 
 /**
- * Only copy known resource keys out of an arbitrary record. `util.ts:33-40`.
+ * Only copy known resource keys out of an arbitrary record. `util.ts`.
  *
  * Note the `> 0` guard and the `Math.floor`: a negative or fractional amount is DROPPED, not
  * clamped to itself. That asymmetry is load-bearing — `tradeTermsProblem` refuses unknown keys
@@ -76,7 +76,7 @@ export function sanitizeBag(input: Readonly<Record<string, number>>): ResourceBa
   return bag;
 }
 
-/** True when `have` contains at least every amount listed in `need`. `util.ts:43-45`. */
+/** True when `have` contains at least every amount listed in `need`. `util.ts`. */
 export function hasResources(
   have: Readonly<ResourceBag>,
   need: Readonly<Partial<Record<ResourceKey, number>>>,
@@ -84,7 +84,7 @@ export function hasResources(
   return RESOURCE_KEYS.every((k) => (have[k] ?? 0) >= (need[k] ?? 0));
 }
 
-/** Whole, non-negative units. Mutates. `util.ts:47-50`. */
+/** Whole, non-negative units. Mutates. `util.ts`. */
 export function clampBag(bag: ResourceBag): ResourceBag {
   for (const k of RESOURCE_KEYS) bag[k] = Math.max(0, Math.floor(bag[k]));
   return bag;

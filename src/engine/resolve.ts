@@ -1,7 +1,7 @@
 /**
  * One in-game day, resolved. **Pure.**
  *
- * Ported from `ninety-days-after/services/game/src/engine/resolve.ts:112-876`. Every arithmetic
+ * Ported from `ninety-days-after/services/game/src/engine/resolve.ts`. Every arithmetic
  * step, every clamp, every message string and every ordering rule is transcribed unchanged. What
  * is NOT transcribed is the seven `db.select()` calls it opened with and the transaction it closed
  * with: those are `../worlds.ts`, and their removal is what makes this function a thing you can
@@ -17,17 +17,17 @@
  * ## What changed, and why
  *
  * 1. **Report and event ids are derived, not random.** The ancestor stamped `randomUUID()` on
- *    every report row (`resolve.ts:827`) and every event (`events.ts:112`). Two runs of one day
+ *    every report row (`resolve.ts`) and every event (`events.ts`). Two runs of one day
  *    therefore produced rows that differed in a column, so "the same day resolves the same way"
  *    could only ever be asserted about a chosen subset of the output. Here a report's id is
  *    `${worldId}:${day}:${ordinal}` and an event's is `${worldId}:${day}:${type}`, so the WHOLE
  *    result is comparable and the conformance corpus asserts on all of it.
  * 2. **`Date.now()` is gone.** The ancestor computed `nextTickAt` inside the resolution
- *    (`resolve.ts:727`); scheduling is the caller's business and lives in `../worlds.ts`.
+ *    (`resolve.ts`); scheduling is the caller's business and lives in `../worlds.ts`.
  * 3. **The bot streak/perk replay is described, not performed.** The ancestor ran
  *    `autoSpendBotPerks` twice — once on the in-memory copy so the achievement checks below could
- *    see today's levels (`resolve.ts:613`) and once against the freshly-read row at persist time
- *    (`resolve.ts:777`). Both still happen; the second is `ProgressDelta.isBot` telling the
+ *    see today's levels (`resolve.ts`) and once against the freshly-read row at persist time
+ *    (`resolve.ts`). Both still happen; the second is `ProgressDelta.isBot` telling the
  *    persistence layer to do it.
  *
  * There is no `Math.random()` in this file and no import that reaches one. Every draw comes from
@@ -182,7 +182,7 @@ export function resolveDay(input: DayInput): DayResult {
       level: row.level,
       xp: row.xp,
       // The ancestor left `xpToNext` at 0 here and let `grantXp` recompute it
-      // (`resolve.ts:136`); it is a display field and never read by the simulation.
+      // (`resolve.ts`); it is a display field and never read by the simulation.
       xpToNext: 0,
       skillPoints: row.skillPoints,
       perks: [...row.perks],
@@ -212,10 +212,10 @@ export function resolveDay(input: DayInput): DayResult {
 
   // Built in a DEFINED order — oldest homestead first, ties on id — rather than in whatever order
   // the caller's array happened to arrive in. The ancestor read its roster with a bare
-  // `db.select()` and no `ORDER BY` (`resolve.ts:116`), then iterated that result for upkeep. Most
+  // `db.select()` and no `ORDER BY` (`resolve.ts`), then iterated that result for upkeep. Most
   // of upkeep is per-player and order-blind, but the disease relief draws from the world's finite
   // medicine pool, so with fewer units than sufferers WHICH survivor was resupplied depended on
-  // the plan Postgres picked. The action loop already sorted (`resolve.ts:246`); this extends the
+  // the plan Postgres picked. The action loop already sorted (`resolve.ts`); this extends the
   // same total order to the rest of the day.
   const P = new Map<string, Working>();
   const orderedPlayers = [...input.players].sort(

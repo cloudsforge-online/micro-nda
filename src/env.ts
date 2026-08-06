@@ -15,7 +15,7 @@
  *
  * The ancestor read `GAME_DATABASE_URL`, `NIMBUS_JWKS_URL`, `NIMBUS_ISSUER`, `PAY_API_URL`,
  * `CORS_ORIGINS`, `TRUST_PROXY`, `GAME_PORT` and `GAME_RATE_LIMIT_MAX`
- * (`ninety-days-after/services/game/src/env.ts:59-73`). CORS and the rate limiter are gone: the
+ * (`ninety-days-after/services/game/src/env.ts`). CORS and the rate limiter are gone: the
  * browser never talks to this service directly any more — `worlds-web` is a separate repository
  * and the edge terminates both concerns — and a limiter keyed on a spoofable forwarded address was
  * the thing the ancestor's own comment there was apologising for.
@@ -183,7 +183,7 @@ export interface Env {
    * **The long-lived credential this service exchanges for short-lived tokens.**
    *
    * It replaces `NDA_SERVICE_TOKEN`, which was a 600-second token read once at boot
-   * (identity/src/tokens.ts:28). Ten minutes into any deployment it expired and every call to a
+   * (identity/src/tokens.ts). Ten minutes into any deployment it expired and every call to a
    * peer failed; nothing could re-mint it, because minting requires the `admin` role. A credential
    * is not a token: it confers nothing by itself, it is revocable, and it survives a restart. See
    * `micro-identity` `src/serviceCredentials.ts` and `@cloudsforge/auth` `ServiceTokenProvider`.

@@ -434,8 +434,8 @@ export function buildRoutes(): Route[] {
       //
       // This verified `x-cloudsforge-signature: sha256=<hmac>`, a format invented here. Every
       // producer in the estate sends `cf-signature: t=<unix>,v1=<hmac>` and nothing else —
-      // `identity/src/outbox.ts:325` is the canonical relay, and `SIGNATURE_HEADER` in
-      // `contracts/packages/events/src/index.ts:1397` is the name it sends it under. So a
+      // `identity/src/outbox.ts` is the canonical relay, and `SIGNATURE_HEADER` in
+      // `contracts/packages/events/src/index.ts` is the name it sends it under. So a
       // correctly signed `identity.user.deleted` arrived with no header this route looked at and
       // was refused, every time. The subscription could never have worked, which is why the
       // erasure handler below had never run against a real delivery.
@@ -506,7 +506,7 @@ export function buildRoutes(): Route[] {
           // ── THE FIELD IS `userId`, AND READING `subject` ERASED NOBODY ──────────────────
           //
           // This read `payload.subject` and fell through to `{ erased: 0 }` when it was absent.
-          // `identity` has never sent a `subject`: `identity/src/deletion.ts:113-125` emits
+          // `identity` has never sent a `subject`: `identity/src/deletion.ts` emits
           // `payload: { userId, tombstoneAt, reason }` with the envelope `key` set to the bare
           // user id. So every real deletion answered 202 `accepted`, wrote an inbox row saying
           // it had been handled, and left the account link in place — the failure mode that

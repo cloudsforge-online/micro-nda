@@ -145,7 +145,7 @@ export const streakMoraleBonus = (streak: number): number => Math.min(12, streak
 /**
  * Fold one resolved day's delta into a progress row that has just been re-read under `FOR UPDATE`.
  *
- * This is the second half of the ancestor's delta design (`resolve.ts:751-810`) and it lives here,
+ * This is the second half of the ancestor's delta design (`resolve.ts`) and it lives here,
  * as one function, so that the persistence layer and the conformance test cannot disagree about
  * what a delta means. `tokens` is untouched on purpose — the tick never awards them, and writing
  * the column would revert a claim made while the day was being computed.

@@ -18,7 +18,7 @@
  * Not here. Billing owns entitlements and `worlds` owns the account-level wardrobe
  * (03-repository-responsibilities:168 — "player identity, cosmetics, entitlement bridge → worlds").
  * The ancestor kept its own `player_cosmetics` table keyed on `user_id`
- * (`db/schema.ts:158`), which made a per-title game service the second registry of what an account
+ * (`db/schema.ts`), which made a per-title game service the second registry of what an account
  * owns. That table is deliberately not in this schema. What survives here is per-WORLD: which slot
  * this survivor is wearing which item in, which is simulation state and is ours.
  *
@@ -49,7 +49,7 @@ export class CosmeticNotOwnedError extends Error {
  *
  * The ancestor's catalogue had six cosmetic kinds and only three of them resolved to anything a
  * client could draw; equipping what cannot be seen was the bug that list replaced
- * (`cosmetics.ts:16`). The same three are here. `commune_crest` is added because a commune has a
+ * (`cosmetics.ts`). The same three are here. `commune_crest` is added because a commune has a
  * roster page to draw one on — the other two the ancestor withheld (map banners, herald flair)
  * still have nowhere to go and are still absent.
  */

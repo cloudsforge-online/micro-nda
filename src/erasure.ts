@@ -1,7 +1,7 @@
 /**
  * GDPR right-to-erasure — the `identity.user.deleted` handler.
  *
- * Rule 6 of `03-repository-responsibilities.md` §2 (`org/README.md:144`): every service storing a
+ * Rule 6 of `03-repository-responsibilities.md` §2 (`org/README.md`): every service storing a
  * `user_id` subscribes to `identity.user.deleted` and erases. This service stores one on every
  * human survivor (`players.user_id`), so this file is that obligation.
  *
@@ -49,8 +49,8 @@
  * | achievements     | retain     | Same. `name` / `description` come from the achievement         |
  * |                  |            | catalogue. Note the delivery job already refuses to post an    |
  * |                  |            | erased survivor's badge onward: it selects `user_id is not     |
- * |                  |            | null` (`achievements.ts:63`) and answers 'unowned'             |
- * |                  |            | (`achievements.ts:86`), so erasure stops future delivery.      |
+ * |                  |            | null` (`achievements.ts`) and answers 'unowned'             |
+ * |                  |            | (`achievements.ts`), so erasure stops future delivery.      |
  * | queued_actions   | retain     | `action` jsonb is an action SPEC (kind, target tile), keyed on |
  * |                  |            | `player_id`. It names no person.                               |
  * | tiles            | retain     | `owner_id` is a `players.id`, not a `user_id`.                 |
@@ -71,7 +71,7 @@
  *
  * ── WHAT IS NOT REACHABLE FROM HERE ───────────────────────────────────────────────────────────
  * Delivered achievements were POSTed to the `worlds` shared-profile service keyed on `user_id`
- * (`achievements.ts:88-92`). Those rows live in `micro-worlds` and this service cannot erase them.
+ * (`achievements.ts`). Those rows live in `micro-worlds` and this service cannot erase them.
  */
 
 import type { TransactionSql } from 'postgres'

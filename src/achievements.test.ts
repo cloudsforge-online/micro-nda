@@ -300,7 +300,7 @@ test(
   { skip },
   async () => {
     // Both clients declared `worlds:write` for months. The unlock route demands `worlds:title`
-    // (worlds/src/server.ts:777) — a separate authority so a title's credential cannot edit a
+    // (worlds/src/server.ts) — a separate authority so a title's credential cannot edit a
     // player's profile. Fixing only the route would have turned a silent 404 into a silent 403.
     const db = asDb(sql);
     const underscoped = await fakeWorlds({ scopes: ['worlds:write'] });
@@ -326,7 +326,7 @@ test(
   'achievements: an achievement is defined before it is unlocked',
   { skip },
   async () => {
-    // `worlds/src/rewards.ts:215-216` refuses an unlock for an achievement it has never been told
+    // `worlds/src/rewards.ts` refuses an unlock for an achievement it has never been told
     // about, and the server maps that to 400. The old client sent `name` and `points` on the
     // unlock, believing worlds would create the achievement for it — it does not. Two calls, two
     // documents.

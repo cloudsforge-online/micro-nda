@@ -7,8 +7,8 @@
  * for the map. That is what makes "same seed + same inputs → byte-identical resolution" a fact
  * about the code rather than an aspiration.
  *
- * Ported verbatim from `ninety-days-after/services/game/src/engine/events.ts:9-34` (FNV-1a and
- * mulberry32) and `.../engine/progression.ts:24-33` (the LCG-driven Fisher–Yates). The bit
+ * Ported verbatim from `ninety-days-after/services/game/src/engine/events.ts` (FNV-1a and
+ * mulberry32) and `.../engine/progression.ts` (the LCG-driven Fisher–Yates). The bit
  * operations are transcribed exactly — `Math.imul`, `>>> 0`, `| 1`, `| 61`, the `/ 4294967296`
  * divisor — because every one of them is part of the answer. `conformance.test.ts` replays a
  * corpus recorded from the ancestor to prove it.

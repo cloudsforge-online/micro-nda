@@ -1,11 +1,11 @@
 /**
  * World events: what the season throws at the region on a given day.
  *
- * Ported from `ninety-days-after/services/game/src/engine/events.ts:94-173`. Two behavioural
+ * Ported from `ninety-days-after/services/game/src/engine/events.ts`. Two behavioural
  * changes, both deliberate and both about REPRODUCIBILITY, which is the whole point of this
  * service's engine:
  *
- *   1. The ancestor stamped each event with `randomUUID()` (`events.ts:112`, `:132`). An event's
+ *   1. The ancestor stamped each event with `randomUUID()` (`events.ts`). An event's
  *      identity was therefore different on every run of the same day, so a resolved day could
  *      never be compared row-for-row against a re-resolution of it. Here the id is DERIVED from
  *      `(worldId, day, type)` — the tuple that already determines the event completely. Two runs
@@ -13,7 +13,7 @@
  *      assert on the whole result rather than on a hand-picked subset of its fields.
  *
  *   2. `scheduleEvents` takes the world's `seed` rather than its `id`. In the ancestor those were
- *      the same string (`world/generate.ts:30` — "The world id is the map seed"), so passing the
+ *      the same string (`world/generate.ts` — "The world id is the map seed"), so passing the
  *      id reproduces the ancestor exactly; the parameter merely stops the identity of a row and
  *      the identity of a simulation from being the same value by accident.
  *

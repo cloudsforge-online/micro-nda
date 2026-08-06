@@ -19,21 +19,21 @@
  * ever saw both halves of:
  *
  *   1. **The route did not exist.** It posted `/internal/achievements`. `worlds/src/server.ts`
- *      defines 22 routes (`:374`–`:847`) and none of them is that one — there is no `/internal/*`
+ *      defines 22 routes (–) and none of them is that one — there is no `/internal/*`
  *      prefix in worlds at all. The route that unlocks an achievement is
- *      `POST /v1/titles/:id/achievements/unlock` (`worlds/src/server.ts:775`).
+ *      `POST /v1/titles/:id/achievements/unlock` (`worlds/src/server.ts`).
  *   2. **The failure was misclassified.** A 404 is a 4xx, so `HttpError.peerDecided` was true, so
  *      this client raised `WorldsRefusedError`, which `achievements.ts` recorded as the terminal
  *      outcome `'refused'` and never retried. The badge was not delayed; it was discarded, and the
  *      caller believed worlds had DECLINED it rather than that we had never reached worlds at all.
  *      That is the line that turned a wiring bug into permanent data loss. See `classify` below.
  *   3. **The scope was wrong.** It declared `worlds:write`. The unlock route demands `worlds:title`
- *      (`worlds/src/server.ts:777`, constant at `:106`) — a separate authority precisely so that a
+ *      (`worlds/src/server.ts`, constant) — a separate authority precisely so that a
  *      title's credential cannot edit a player's profile. Fixing (1) alone turns a 404 into a 403.
  *   4. **The identifier was a different kind of thing.** It sent `titleSlug` in the body. The title
- *      is a UUID in the PATH, and `itemIdOf` (`worlds/src/server.ts:968-972`) answers 404 to
+ *      is a UUID in the PATH, and `itemIdOf` (`worlds/src/server.ts`) answers 404 to
  *      anything that is not one, before the handler runs. The body field was spelled `code` here
- *      and `key` at the server (`:781`).
+ *      and `key` at the server.
  *
  * The wire shapes now come from `@cloudsforge/contracts-worlds`, which ships a `serialise`/`parse`
  * pair per document rather than bare types, for the reason above: types alone would have caught
@@ -44,7 +44,7 @@
  * `worlds:title`, `{userId, key}` body, 201 fresh / 200 replayed, dedupe on
  * `(user_id, achievement_id)`. Adding the invented route would have been a second spelling of an
  * existing capability, and a worse one: it would have to take the title in the BODY, which throws
- * away the authorization property the path form gives. `worlds/src/server.ts:756-757` states it —
+ * away the authorization property the path form gives. `worlds/src/server.ts` states it —
  * a title cannot touch another title's achievements *because the id is in the path*. A
  * body-supplied slug would let any `worlds:title` credential award badges as any title.
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -77,14 +77,14 @@ import type { LiveScope } from '@cloudsforge/contracts-auth';
  * `micro-market` declared `policy:evaluate` and `micro-wallet` `custody:address` — neither ever
  * a registry key — for the life of both services. `derive-grants.mjs` reads this into
  * `IDENTITY_SERVICE_TOKEN_GRANTS`, and identity validates that list at import and REFUSES TO
- * START on an unknown name (`identity/src/env.ts:141`): a dead identity container, so no tokens
+ * START on an unknown name (`identity/src/env.ts`): a dead identity container, so no tokens
  * for anybody.
  *
  * `LiveScope` rather than `Scope` because `Scope` is `keyof typeof SCOPES` — every registered
  * key, DEPRECATED ones included — and identity will not mint a deprecated scope either.
  * `LiveScope = Exclude<Scope, DeprecatedScope>`, with `DeprecatedScope` computed FROM `SCOPES` by
  * a conditional type over the `deprecated` field rather than hand-listed
- * (`contracts/packages/auth/src/index.ts:507`), so it cannot drift from the registry. `Scope`
+ * (`contracts/packages/auth/src/index.ts`), so it cannot drift from the registry. `Scope`
  * keeps its wide meaning and this does not narrow it: a token arriving from anywhere may carry a
  * scope that has since died, so reading is wide and demanding is narrow. This is demanding.
  */
@@ -205,7 +205,7 @@ export function httpWorldsClient(options: WorldsClientOptions): WorldsClient {
   /**
    * Our own title id, resolved from our slug through worlds' public registry.
    *
-   * `GET /v1/titles` (`worlds/src/server.ts:507-522`) is unauthenticated and returns `id` and
+   * `GET /v1/titles` (`worlds/src/server.ts`) is unauthenticated and returns `id` and
    * `slug` together — so the slug-to-UUID step that the old client skipped needs no new route and
    * no new configuration. Cached for the life of the process; a title's id does not change, and
    * re-resolving per badge would put a second request in front of every delivery.
@@ -239,14 +239,14 @@ export function httpWorldsClient(options: WorldsClientOptions): WorldsClient {
 
   /**
    * Worlds refuses an unlock for an achievement it has never been told about — `findAchievement`
-   * returns nothing and `worlds/src/rewards.ts:216` raises, which the server maps to 400. So the
+   * returns nothing and `worlds/src/rewards.ts` raises, which the server maps to 400. So the
    * definition is pushed first. `PUT /v1/titles/:id/achievements` is an upsert
-   * (`worlds/src/rewards.ts:155-159`), so this is idempotent and safe to repeat.
+   * (`worlds/src/rewards.ts`), so this is idempotent and safe to repeat.
    *
    * Once per key per process, not once per badge: a sweep delivering fifty `days_30` badges sends
    * one definition, and a restart re-sends one. The values are this service's catalogue
    * (`rules.ts` ACHIEVEMENTS), which is the authority on its own badges — that is what the
-   * `worlds:title` scope means (`worlds/src/server.ts:756-757`).
+   * `worlds:title` scope means (`worlds/src/server.ts`).
    */
   const defined = new Set<string>();
 

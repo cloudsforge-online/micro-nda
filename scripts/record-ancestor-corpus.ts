@@ -17,16 +17,16 @@
  *
  * ## What is and is not comparable
  *
- * The ancestor stamped `randomUUID()` on every `reports` row (`resolve.ts:827`) and every
- * `world_events` row (`events.ts:112`). Those two columns are not comparable with anything — not
+ * The ancestor stamped `randomUUID()` on every `reports` row (`resolve.ts`) and every
+ * `world_events` row (`events.ts`). Those two columns are not comparable with anything — not
  * with this port, and not with a second run of the ancestor itself. They are recorded as `null`
  * and the conformance test says so out loud. Every other column of every other row is captured
  * and compared exactly.
  *
  * ## Why the world ids and createdAt values are literals
  *
- * The world id is the ancestor's map seed AND its event seed (`world/generate.ts:30`), and
- * `createdAt` is the primary key of the resolution order (`resolve.ts:248`). Both are therefore
+ * The world id is the ancestor's map seed AND its event seed (`world/generate.ts`), and
+ * `createdAt` is the primary key of the resolution order (`resolve.ts`). Both are therefore
  * genuine simulation inputs. `createWorld` mints a uuid and Postgres defaults `created_at` to
  * `now()`, so a corpus built through those paths would be unreproducible by construction. Rows are
  * inserted directly with fixed values instead — the same rows those functions would have written,
@@ -529,7 +529,7 @@ const SCENARIOS: Scenario[] = [
     // ═══════════════════════════════════════════════════════════════════════════════════════════
     // AN INHERITED DEFECT, PINNED RATHER THAN FIXED.
     //
-    // `severity = 1 + ((h >> 8) % baseSeverity)` (`engine/events.ts:130`). `h` is unsigned 32-bit
+    // `severity = 1 + ((h >> 8) % baseSeverity)` (`engine/events.ts`). `h` is unsigned 32-bit
     // (`hash` ends `>>> 0`) but `>>` is an ARITHMETIC shift, so for any h >= 2^31 — half of all
     // seeds — `h >> 8` is negative, JS `%` keeps the sign of the dividend, and the severity comes
     // out 0 or, in the season's final third where `baseSeverity` is 3, **-1**.

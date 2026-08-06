@@ -349,7 +349,7 @@ test(
     // engine writes is the world summary — which carries no handle at all, and an erasure test
     // built on that fixture asserts nothing. A single `work` action produces a report with
     // `actor_handle = 'alice'` AND a message reading "alice worked the homestead"
-    // (`engine/resolve.ts:379`), which is the denormalisation this test exists to catch.
+    // (`engine/resolve.ts`), which is the denormalisation this test exists to catch.
     await queueActions(
       asDb(sql),
       'nda',
@@ -380,7 +380,7 @@ test(
 
     // ── THE PAYLOAD `identity` ACTUALLY SENDS ────────────────────────────────────────────
     // `{ userId, tombstoneAt, reason }`, with the envelope key set to the bare user id —
-    // `identity/src/deletion.ts:113-125`. This test used to send `{ subject: 'user:<uuid>' }`,
+    // `identity/src/deletion.ts`. This test used to send `{ subject: 'user:<uuid>' }`,
     // a shape identity has never emitted, and the handler read `subject`. Both agreed with each
     // other and neither agreed with the producer, so the test passed while every real deletion
     // erased nothing and answered 202.

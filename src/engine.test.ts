@@ -195,7 +195,7 @@ test('bots: raiders spread across the map instead of dogpiling one homestead', (
 
 test('rng: hash is the ancestor FNV-1a, pinned on known inputs', () => {
   // These four values were read out of the ancestor's own `hash` (
-  // `ninety-days-after/services/game/src/engine/events.ts:9`) by importing it and calling it —
+  // `ninety-days-after/services/game/src/engine/events.ts`) by importing it and calling it —
   // not derived from this transcription, which would only prove the transcription agrees with
   // itself. A hash that silently changes re-rolls every world event and every objective
   // assignment in every world ever played.
