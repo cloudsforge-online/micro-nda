@@ -19,6 +19,7 @@
 
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import type { Sql, TransactionSql } from 'postgres'
+import type { EventVersion } from '@cloudsforge/contracts-events'
 import { HttpClient } from '@cloudsforge/http'
 import type { Logger } from '@cloudsforge/telemetry'
 import type { Handler } from '@cloudsforge/jobs'
@@ -38,16 +39,48 @@ export interface DomainEvent {
   readonly version?: number
 }
 
-/** The wire envelope. Additive-only, versioned per topic, schema-diff enforced — AD-02. */
+/**
+ * The wire version, in the CONTRACT's shape.
+ *
+ * `@cloudsforge/contracts-events` types `EventEnvelope.version` as `${number}.${number}` — a
+ * "major.minor" STRING — and every consumer refuses an envelope without one. This relay stamped
+ * the stored INTEGER, so a delivery whose signature verified was still thrown away at the
+ * envelope, before anything looked at a payload.
+ *
+ * Measured against the contract's own `classifyEnvelope` on 2026-08-11, on this service's live
+ * outbox — 13 rows across six topics, none of them registered yet:
+ *
+ *     as shipped -> malformed: version: missing, actor: missing, correlationId: missing
+ *     fixed      -> well-formed; only the registration is outstanding
+ *
+ * The version was not the whole defect. `actor` and `correlation_id` are nullable columns and 11
+ * of those 13 rows have a null actor, so the ticket's version-only patch would have left every
+ * world event refused for two other reasons. All three are mapped here, at the wire.
+ *
+ * The stored column stays an integer: storage records the major, and the mapping to the
+ * contract's shape happens here, at the wire, in one place. `EventVersion` is IMPORTED rather
+ * than restated so this cannot drift from the type consumers check against — restating it
+ * locally is what let `version: number` typecheck clean in eight repositories at once.
+ */
+const wireVersion = (v: number): EventVersion => `${v}.0`
+
+/**
+ * The wire envelope. Additive-only, versioned per topic, schema-diff enforced — AD-02.
+ *
+ * `version`, `actor` and `correlationId` are the CONTRACT's types, not the column's. The stored
+ * row is looser than the wire — `actor` and `correlation_id` are nullable columns, `version` is
+ * an integer — and all three were passed straight through. Typing them here makes passing a
+ * column through a compile error rather than a delivery nobody receives and nobody reports.
+ */
 export interface EventEnvelope {
   readonly id: string
   readonly topic: string
   readonly key: string
   readonly occurredAt: string
   readonly producer: string
-  readonly version: number
-  readonly actor: string | null
-  readonly correlationId: string | null
+  readonly version: EventVersion
+  readonly actor: string
+  readonly correlationId: string
   readonly payload: Record<string, unknown>
 }
 
@@ -125,7 +158,7 @@ export interface RelayDeps {
   readonly clientFor?: (url: string) => Pick<HttpClient, 'request'>
 }
 
-interface OutboxRow {
+export interface OutboxRow {
   readonly id: string
   readonly topic: string
   readonly key: string
@@ -135,6 +168,33 @@ interface OutboxRow {
   readonly actor: string | null
   readonly correlation_id: string | null
   readonly payload: Record<string, unknown>
+}
+
+/**
+ * A stored row, as the envelope that goes on the wire. THE ONLY PLACE AN ENVELOPE IS BUILT.
+ *
+ * Exported and separated from `createRelay` so the wire shape can be asserted WITHOUT a database.
+ * That is the whole reason the version defect survived: this suite covered the outbox insert and
+ * the signing scheme, both of which were right, and never once looked at what was inside the
+ * bytes it signed. A seam that needs a Postgres to observe is a seam that goes unobserved.
+ */
+export function buildEnvelope(row: OutboxRow): EventEnvelope {
+  return {
+    id: row.id,
+    topic: row.topic,
+    key: row.key,
+    occurredAt: row.occurred_at.toISOString(),
+    producer: row.producer,
+    version: wireVersion(row.version),
+    // `system` is the contract's own value for "no principal did this" — a scheduled day roll, which
+    // is exactly what a null actor column means here. A missing correlation id falls back to the
+    // event id: an id that ties the event to itself is weaker than one that ties it to the
+    // request, but it is never absent, and an absent one is where a cross-service investigation
+    // stops — the contract's own wording for the defect it answers with.
+    actor: row.actor ?? 'system',
+    correlationId: row.correlation_id ?? row.id,
+    payload: row.payload,
+  }
 }
 
 interface SubscriptionRow {
@@ -183,17 +243,7 @@ export function createRelay(deps: RelayDeps): Handler {
         select id, url from event_subscriptions where topic = ${event.topic} and active = true
       `
 
-      const envelope: EventEnvelope = {
-        id: event.id,
-        topic: event.topic,
-        key: event.key,
-        occurredAt: event.occurred_at.toISOString(),
-        producer: event.producer,
-        version: event.version,
-        actor: event.actor,
-        correlationId: event.correlation_id,
-        payload: event.payload,
-      }
+      const envelope = buildEnvelope(event)
       // Signed over the exact bytes `HttpClient` will send: it stringifies the same object with
       // the same key order, so the MAC a subscriber recomputes over the received body matches.
       const signature = signEvent(JSON.stringify(envelope), deps.signingSecret)
