@@ -1,6 +1,6 @@
 {
   "name": "@cloudsforge/nda",
-  "version": "2026.08.41",
+  "version": "2026.08.43",
   "private": true,
   "description": "Ninety Days After — the survival-strategy Forge Worlds title. Worlds, tiles, homesteads, queued actions, communes, objectives, world events, and a PURE deterministic day-resolution engine that replays a corpus recorded from the frozen ancestor byte-for-byte. Turn resolution is a leased job keyed on world_id, so two workers can never resolve one day twice.",
   "license": "MIT",
