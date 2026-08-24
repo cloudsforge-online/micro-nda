@@ -21,6 +21,17 @@ import { onRunnerEvent, registerHandlers, seedRecurring } from './jobs.ts';
 import { buildUpstreams } from './upstreams.ts';
 import type { Db } from './outbox.ts';
 
+// ── WHICH ESTATE THIS DEPLOYMENT IS ─────────────────────────────────────────────────────────
+//
+// Every per-network map in this file keys its primary entry by THIS, never by the literal
+// `mainnet`. Same image, same code, different env: a testnet pod that hardcodes the key holds
+// its own database and its own queue under the other estate's name, and then refuses — or, when
+// the throw escapes a request listener, DIES — on every request the gateway correctly stamped.
+//
+// It happened twice. The handle, then the job plane.
+const ownNetwork = (env.singleNetwork || 'mainnet') as 'mainnet' | 'testnet';
+
+
 // 1. Environment — validated on import of ./env.ts.
 
 // 2. Telemetry, before anything that can fail.
@@ -143,8 +154,8 @@ const queueFor = (handle: typeof sql) =>
 });
 
 const planes = [
-  { network: 'mainnet' as const, pool: sql, db, queue: queueFor(sql) },
-  ...(sqlTestnet
+  { network: ownNetwork, pool: sql, db, queue: queueFor(sql) },
+  ...(sqlTestnet && ownNetwork !== 'testnet'
     ? [{ network: 'testnet' as const, pool: sqlTestnet, db: sqlTestnet as unknown as Db, queue: queueFor(sqlTestnet) }]
     : []),
 ]
@@ -156,18 +167,6 @@ const planeFor = (network: 'mainnet' | 'testnet') => {
 
 // 8. Routes.
 const verifier = new Verifier({ jwksUrl: env.identityJwksUrl, issuer: env.identityIssuer });
-// ── WHICH ESTATE THIS DEPLOYMENT IS ─────────────────────────────────────────────────────────
-//
-// The `networkSql` key below used to be the literal `mainnet`. Same image, same code,
-// different env — so the TESTNET pod registered its testnet DSN under the name `mainnet` and
-// then refused every request the gateway stamped `CF-Network: testnet`, because it genuinely
-// held no handle by that name. Five services crash-looped on it within ten minutes of the
-// first deploy: the refusal was right, the registration was wrong.
-//
-// `CF_NETWORK_SINGLE` is how a single-network pod says which estate it is. The render sets it
-// for every deployment; `mainnet` remains the default only for a bare `pnpm dev`.
-const ownNetwork = (env.singleNetwork || 'mainnet') as 'mainnet' | 'testnet'
-
 const server = createServer({
   lifecycle,
   logger,
@@ -176,7 +175,7 @@ const server = createServer({
   // The SELECTOR, not a handle — routes use `ctx.sql`, resolved once per request.
   sql: networkSql({
     [ownNetwork]: sql as unknown as RuntimeSql,
-    ...(sqlTestnet ? { testnet: sqlTestnet as unknown as RuntimeSql } : {}),
+    ...(sqlTestnet && ownNetwork !== 'testnet' ? { testnet: sqlTestnet as unknown as RuntimeSql } : {}),
   }),
   // The fallback for a request with no `CF-Network` header — which is EVERY service-to-service
   // call, because those go container to container and never reach the gateway that stamps one.
@@ -187,7 +186,7 @@ const server = createServer({
   billing,
   // The boot-time value. `forRequest` in server.ts replaces it with this request's network before
   // any route sees it — an enqueue into the other estate's queue is a write nothing would flag.
-  queue: planeFor('mainnet').queue,
+  queue: planeFor(ownNetwork).queue,
   queueFor: (network: 'mainnet' | 'testnet') => planeFor(network).queue,
   eventSigningSecret: env.outboxSigningSecret,
   beforeScrape: async () => {
