@@ -5,6 +5,7 @@
 // routes with none, and a retry there created a duplicate; that was found by ENUMERATING the
 // routes, not by anyone remembering. This is that enumeration, run on every build.
 
+import { networkSql, type Sql as RuntimeSql } from '@cloudsforge/db'
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import type { AddressInfo } from 'node:net';
@@ -86,6 +87,7 @@ before(async () => {
   sql = openDb(10);
   await migrateTestDb(sql);
   billing = fakeBilling();
+  const testQueue = new JobQueue(sql as unknown as JobsSql, { owner: 'test' });
   const lifecycle = new Lifecycle({ drainDelayMs: 0, drainTimeoutMs: 100 });
   lifecycle.markReady();
   server = createServer({
@@ -93,10 +95,15 @@ before(async () => {
     logger: quietLogger(),
     metrics: testMetrics(),
     verifier,
-    sql: asDb(sql),
+    sql: singleNetworkSql(asDb(sql)),
+    singleNetwork: 'mainnet' as const,
     producer: 'nda',
     billing,
-    queue: new JobQueue(sql as unknown as JobsSql, { owner: 'test' }),
+    queue: testQueue,
+    // One queue, presented as the per-network selector. The fixture runs against a single
+    // database, so both requests get the same one — what is under test here is that the route
+    // asks for a network at all, not that two exist.
+    queueFor: () => testQueue,
     eventSigningSecret: SIGNING_SECRET,
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
@@ -694,3 +701,12 @@ test('server: an admin can create, start, populate and force a tick on a world',
     select count(*)::int as n from jobs where kind = 'world.tick' and key = ${worldId}`;
   assert.equal(job!.n, 1);
 });
+
+/**
+ * One handle, presented as the per-network selector the server now takes. The fixture runs against
+ * a single test database, so mainnet is the only configured network — which exercises the REFUSAL
+ * path for free: anything reaching for testnet throws rather than reusing this handle.
+ */
+function singleNetworkSql(db: unknown) {
+  return networkSql({ mainnet: db as RuntimeSql })
+}

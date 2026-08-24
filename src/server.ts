@@ -47,7 +47,9 @@ import {
   statusFor,
   type Principal,
 } from '@cloudsforge/auth';
-import type { Lifecycle } from '@cloudsforge/lifecycle';
+import type { Lifecycle } from '@cloudsforge/lifecycle'
+import { NetworkUnknownError, requestNetwork, type Network } from '@cloudsforge/http'
+import type { NetworkSql } from '@cloudsforge/db';
 import { Metrics, newRequestId, type Logger } from '@cloudsforge/telemetry';
 import type { JobQueue } from '@cloudsforge/jobs';
 import { SIGNATURE_HEADER, verifyDelivery } from '@cloudsforge/contracts-events';
@@ -114,10 +116,25 @@ export interface ServerDeps {
   readonly logger: Logger;
   readonly metrics: Metrics;
   readonly verifier: PrincipalVerifier;
-  readonly sql: Db;
+  /**
+   * The per-network SELECTOR, not a handle. Routes use `ctx.sql`; `NetworkSql` has no query
+   * methods, so reaching for the process-wide handle does not compile.
+   */
+  readonly sql: NetworkSql
+  /**
+   * The network to assume when no `CF-Network` arrives, or `undefined` to refuse. `CF_NETWORK_SINGLE`,
+   * for `pnpm dev`, which has no gateway in front of it. Never set in production.
+   */
+  readonly singleNetwork?: Network
   readonly producer: string;
   readonly billing: EntitlementReader;
+  /**
+   * Boot-time value; `forRequest` replaces it with the queue for this request's network.
+   * An enqueue is a WRITE, and a job claimed by a runner holding the other estate's handle
+   * applies to the other estate's rows and completes without complaint.
+   */
   readonly queue: Pick<JobQueue, 'enqueue'>;
+  readonly queueFor: (network: Network) => Pick<JobQueue, 'enqueue'>;
   readonly eventSigningSecret: string;
   readonly now?: () => Date;
   readonly beforeScrape?: () => Promise<void>;
@@ -187,7 +204,34 @@ interface RequestContext {
   readonly requestId: string;
   readonly log: Logger;
   readonly params: Readonly<Record<string, string>>;
+  /**
+   * The network THIS REQUEST belongs to, from the `CF-Network` header the gateway stamped.
+   *
+   * Not a property of the process: one pod serves both estates since the network consolidation
+   * (micro-deploy `docs/network-consolidation.md`), so "which network am I" has no answer.
+   */
+  readonly network: Network;
+  /**
+   * The database handle for `network`, resolved ONCE, at the edge of the request.
+   *
+   * Every route uses this rather than reaching for the process-wide handle, because a wrong handle
+   * is not an error — it is a query that SUCCEEDS against the other estate's rows and says nothing.
+   * `deps.sql` is a `NetworkSql` with no query methods, so the mistake does not compile.
+   */
+  readonly sql: Db;
 }
+
+/**
+ * Routes that answer without belonging to a network.
+ *
+ * Kubelet probes the first two and Prometheus scrapes the third; none arrives through the gateway,
+ * so none carries `CF-Network`. Refusing them turns a data-isolation rule into a CrashLoopBackOff —
+ * which is exactly what agora's first build did: 500 on every probe, container never ready.
+ *
+ * A literal SET rather than a prefix, because this is an exemption from a data boundary and
+ * widening it should be a deliberate edit. Every member must answer without touching the database.
+ */
+const OPERATIONAL_ROUTES: ReadonlySet<string> = new Set(['/livez', '/readyz', '/metrics'])
 
 /** How a route establishes that a repeat of it is the same operation, not a second one. */
 export type IdempotencyPolicy =
@@ -259,7 +303,7 @@ export function createServer(deps: ServerDeps): Server {
     inFlight += 1;
     deps.metrics.set('http_requests_in_flight', inFlight);
 
-    const finish = (status: number): void => {
+    const finish = (status: number, metricNetwork: string): void => {
       inFlight -= 1;
       deps.metrics.set('http_requests_in_flight', inFlight);
       const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
@@ -267,14 +311,48 @@ export function createServer(deps: ServerDeps): Server {
         method,
         route: routeLabel,
         status: String(status),
+        // One target now serves both estates, so the network has to be on the SERIES. Labelled
+        // per target it would say nothing — micro-org#398 in a form nothing could recover.
+        network: metricNetwork,
       });
-      deps.metrics.observe('http_request_duration_ms', durationMs, { method, route: routeLabel });
+      deps.metrics.observe('http_request_duration_ms', durationMs, {
+        method,
+        route: routeLabel,
+        network: metricNetwork,
+      });
     };
 
-    void handle(matched, { req, url, requestId, log, params }, deps)
+    // ── THE NETWORK, THEN THE HANDLE, BEFORE ANY ROUTE RUNS ──────────────────────────────────
+    //
+    // `requestNetwork` REFUSES an unstamped request rather than assuming mainnet: a 500 is a
+    // routing fault made loud, where a default is a cross-network write nothing would ever flag.
+    //
+    // The operational endpoints are exempt because kubelet and Prometheus do not come through the
+    // gateway and never send the header. Refusing them makes the pod never become ready.
+    const networkless = matched !== undefined && OPERATIONAL_ROUTES.has(matched.path)
+    let network: Network
+    try {
+      network = networkless
+        ? (deps.singleNetwork ?? deps.sql.networks[0] ?? 'mainnet')
+        : requestNetwork(req.headers, deps.singleNetwork ? { fallback: deps.singleNetwork } : {})
+    } catch (err) {
+      log.error('request carries no usable network', {
+        err: err instanceof NetworkUnknownError ? err.message : err,
+      })
+      send(
+        res,
+        errorReply(500, 'network_unknown', 'this request could not be attributed to a network', requestId),
+        requestId,
+      )
+      finish(500, 'unknown')
+      return
+    }
+
+    const sql = deps.sql.for(network) as unknown as Db
+    void handle(matched, { req, url, requestId, log, params, network, sql }, forRequest(deps, network))
       .then((reply) => {
         send(res, reply, requestId);
-        finish(reply.status);
+        finish(reply.status, network);
       })
       .catch((err: unknown) => {
         log.error('request handler threw after mapping', { err });
@@ -283,9 +361,17 @@ export function createServer(deps: ServerDeps): Server {
           errorReply(500, 'internal', 'the request could not be completed', requestId),
           requestId,
         );
-        finish(500);
+        finish(500, network);
       });
   });
+}
+
+/**
+ * The deps a REQUEST sees: everything that closed over a database handle at boot, rebuilt for this
+ * request's network. `sql` stays the selector on `deps` because routes read `ctx.sql`.
+ */
+function forRequest(deps: ServerDeps, network: Network): ServerDeps {
+  return { ...deps, queue: deps.queueFor(network) };
 }
 
 async function handle(route: Route | undefined, ctx: RequestContext, deps: ServerDeps): Promise<Reply> {
@@ -394,7 +480,7 @@ async function idempotently<T>(
   if (!key || key.length < 1 || key.length > 200) {
     throw new BadRequestError('an Idempotency-Key header (1-200 characters) is required');
   }
-  return withIdempotency(deps.sql, {
+  return withIdempotency(ctx.sql, {
     route,
     clientKey: key,
     requestHash: requestFingerprint({ ...body, path: ctx.url.pathname }),
@@ -497,7 +583,7 @@ export function buildRoutes(): Route[] {
       try {
         // Deduped on the SOURCE event id. A failed handler leaves no inbox row, so a redelivery is
         // reprocessed rather than swallowed.
-        const outcome = await withInbox(deps.sql, topic, eventId, async (tx) => {
+        const outcome = await withInbox(ctx.sql, topic, eventId, async (tx) => {
           if (topic !== DELETED_TOPIC) return { erased: 0 };
           // ─────────────────────────────────────────────────────────────────────────────────
           // GDPR erasure. The reasoning, and the per-table decision behind it, is the header of
@@ -547,52 +633,52 @@ export function buildRoutes(): Route[] {
         .map((s) => s.trim())
         .filter((s): s is WorldStatus => s === 'lobby' || s === 'active' || s === 'archived');
       const statuses: WorldStatus[] = requested.length > 0 ? requested : ['lobby', 'active'];
-      const worlds = await listWorlds(deps.sql, statuses);
+      const worlds = await listWorlds(ctx.sql, statuses);
       const summaries = await Promise.all(
-        worlds.map(async (w) => ({ ...w, ...(await playerCounts(deps.sql, w.id)) })),
+        worlds.map(async (w) => ({ ...w, ...(await playerCounts(ctx.sql, w.id)) })),
       );
       return { status: 200, body: { worlds: summaries } };
     }),
 
     define('GET', '/v1/worlds/:id', async (ctx, deps) => {
       await requirePrincipal(ctx, deps);
-      const world = await mustFindWorld(deps, ctx.params['id']);
-      return { status: 200, body: { world: { ...world, ...(await playerCounts(deps.sql, world.id)) } } };
+      const world = await mustFindWorld(ctx.sql, ctx.params['id']);
+      return { status: 200, body: { world: { ...world, ...(await playerCounts(ctx.sql, world.id)) } } };
     }),
 
     define('GET', '/v1/worlds/:id/map', async (ctx, deps) => {
       await requirePrincipal(ctx, deps);
-      const world = await mustFindWorld(deps, ctx.params['id']);
+      const world = await mustFindWorld(ctx.sql, ctx.params['id']);
       return {
         status: 200,
-        body: { width: world.width, height: world.height, tiles: await worldMap(deps.sql, world.id) },
+        body: { width: world.width, height: world.height, tiles: await worldMap(ctx.sql, world.id) },
       };
     }),
 
     define('GET', '/v1/worlds/:id/roster', async (ctx, deps) => {
       await requirePrincipal(ctx, deps);
-      const world = await mustFindWorld(deps, ctx.params['id']);
-      return { status: 200, body: { roster: await roster(deps.sql, world.id, world.day) } };
+      const world = await mustFindWorld(ctx.sql, ctx.params['id']);
+      return { status: 200, body: { roster: await roster(ctx.sql, world.id, world.day) } };
     }),
 
     define('GET', '/v1/worlds/:id/leaderboard', async (ctx, deps) => {
       await requirePrincipal(ctx, deps);
-      const world = await mustFindWorld(deps, ctx.params['id']);
-      return { status: 200, body: { leaderboard: await leaderboard(deps.sql, world.id, world.day) } };
+      const world = await mustFindWorld(ctx.sql, ctx.params['id']);
+      return { status: 200, body: { leaderboard: await leaderboard(ctx.sql, world.id, world.day) } };
     }),
 
     define('GET', '/v1/worlds/:id/events', async (ctx, deps) => {
       await requirePrincipal(ctx, deps);
-      const world = await mustFindWorld(deps, ctx.params['id']);
-      return { status: 200, body: { events: await worldEventsOf(deps.sql, world.id) } };
+      const world = await mustFindWorld(ctx.sql, ctx.params['id']);
+      return { status: 200, body: { events: await worldEventsOf(ctx.sql, world.id) } };
     }),
 
     define('GET', '/v1/worlds/:id/archive', async (ctx, deps) => {
       await requirePrincipal(ctx, deps);
-      const world = await mustFindWorld(deps, ctx.params['id']);
+      const world = await mustFindWorld(ctx.sql, ctx.params['id']);
       if (world.status !== 'archived') throw new ConflictError('the season has not finished');
-      const board = await leaderboard(deps.sql, world.id, world.day);
-      const events = await worldEventsOf(deps.sql, world.id);
+      const board = await leaderboard(ctx.sql, world.id, world.day);
+      const events = await worldEventsOf(ctx.sql, world.id);
       return {
         status: 200,
         body: {
@@ -614,57 +700,57 @@ export function buildRoutes(): Route[] {
 
     define('GET', '/v1/worlds/:id/me', async (ctx, deps) => {
       const userId = await requireUser(ctx, deps);
-      const world = await mustFindWorld(deps, ctx.params['id']);
-      const me = await mustBeSettled(deps, world.id, userId);
+      const world = await mustFindWorld(ctx.sql, ctx.params['id']);
+      const me = await mustBeSettled(ctx.sql, world.id, userId);
       // Viewing the world is a login: it advances the streak, which feeds the morale bonus.
-      await recordLogin(deps.sql, world.id, me.id, world.day);
+      await recordLogin(ctx.sql, world.id, me.id, world.day);
       return { status: 200, body: { player: serialisePlayer(me) } };
     }),
 
     define('GET', '/v1/worlds/:id/actions', async (ctx, deps) => {
       const userId = await requireUser(ctx, deps);
-      const me = await mustBeSettled(deps, ctx.params['id'] ?? '', userId);
-      return { status: 200, body: { actions: await queuedActionsOf(deps.sql, me.id) } };
+      const me = await mustBeSettled(ctx.sql, ctx.params['id'] ?? '', userId);
+      return { status: 200, body: { actions: await queuedActionsOf(ctx.sql, me.id) } };
     }),
 
     define('GET', '/v1/worlds/:id/reports', async (ctx, deps) => {
       const userId = await requireUser(ctx, deps);
-      const world = await mustFindWorld(deps, ctx.params['id']);
-      const me = await playerOf(deps.sql, world.id, userId);
+      const world = await mustFindWorld(ctx.sql, ctx.params['id']);
+      const me = await playerOf(ctx.sql, world.id, userId);
       const dayParam = ctx.url.searchParams.get('day');
       const day = dayParam !== null && /^\d+$/.test(dayParam) ? Number(dayParam) : null;
       const limit = boundedLimit(ctx.url.searchParams.get('limit'), 200, 1000);
       return {
         status: 200,
-        body: { reports: await reportsFor(deps.sql, world.id, me?.id ?? null, day, limit) },
+        body: { reports: await reportsFor(ctx.sql, world.id, me?.id ?? null, day, limit) },
       };
     }),
 
     define('GET', '/v1/worlds/:id/progress', async (ctx, deps) => {
       const userId = await requireUser(ctx, deps);
-      const world = await mustFindWorld(deps, ctx.params['id']);
-      const me = await mustBeSettled(deps, world.id, userId);
-      const work = await recordLogin(deps.sql, world.id, me.id, world.day);
+      const world = await mustFindWorld(ctx.sql, ctx.params['id']);
+      const me = await mustBeSettled(ctx.sql, world.id, userId);
+      const work = await recordLogin(ctx.sql, world.id, me.id, world.day);
       return { status: 200, body: { progress: serialiseProgress(work) } };
     }),
 
     define('GET', '/v1/worlds/:id/objectives', async (ctx, deps) => {
       const userId = await requireUser(ctx, deps);
-      const world = await mustFindWorld(deps, ctx.params['id']);
-      const me = await mustBeSettled(deps, world.id, userId);
-      await ensureProgress(deps.sql, world.id, me.id);
-      return { status: 200, body: { objectives: await objectivesOf(deps.sql, me.id) } };
+      const world = await mustFindWorld(ctx.sql, ctx.params['id']);
+      const me = await mustBeSettled(ctx.sql, world.id, userId);
+      await ensureProgress(ctx.sql, world.id, me.id);
+      return { status: 200, body: { objectives: await objectivesOf(ctx.sql, me.id) } };
     }),
 
     define('GET', '/v1/worlds/:id/achievements', async (ctx, deps) => {
       const userId = await requireUser(ctx, deps);
-      const me = await mustBeSettled(deps, ctx.params['id'] ?? '', userId);
-      return { status: 200, body: { achievements: await achievementsOf(deps.sql, me.id) } };
+      const me = await mustBeSettled(ctx.sql, ctx.params['id'] ?? '', userId);
+      return { status: 200, body: { achievements: await achievementsOf(ctx.sql, me.id) } };
     }),
 
     define('GET', '/v1/worlds/:id/cosmetics', async (ctx, deps) => {
       const userId = await requireUser(ctx, deps);
-      const me = await mustBeSettled(deps, ctx.params['id'] ?? '', userId);
+      const me = await mustBeSettled(ctx.sql, ctx.params['id'] ?? '', userId);
       // Fails OPEN: what someone is already wearing is ours to answer, and only the Equip buttons
       // need billing. This runs on every load, so a billing outage must not break the game screen.
       let unlocked: string[] | null = null;
@@ -684,18 +770,18 @@ export function buildRoutes(): Route[] {
 
     define('GET', '/v1/worlds/:id/communes', async (ctx, deps) => {
       await requirePrincipal(ctx, deps);
-      const world = await mustFindWorld(deps, ctx.params['id']);
-      return { status: 200, body: { communes: await listCommunes(deps.sql, world.id) } };
+      const world = await mustFindWorld(ctx.sql, ctx.params['id']);
+      return { status: 200, body: { communes: await listCommunes(ctx.sql, world.id) } };
     }),
 
     define('GET', '/v1/worlds/:id/communes/:cid', async (ctx, deps) => {
       const userId = await requireUser(ctx, deps);
-      const world = await mustFindWorld(deps, ctx.params['id']);
-      const me = await playerOf(deps.sql, world.id, userId);
+      const world = await mustFindWorld(ctx.sql, ctx.params['id']);
+      const me = await playerOf(ctx.sql, world.id, userId);
       return {
         status: 200,
         body: await communeDetail(
-          deps.sql,
+          ctx.sql,
           world.id,
           ctx.params['cid'] ?? '',
           me?.id ?? null,
@@ -711,7 +797,7 @@ export function buildRoutes(): Route[] {
       const body = await readJson(ctx.req);
       const { result, replayed } = await idempotently(ctx, deps, 'POST /v1/worlds', body, () =>
         createWorld(
-          deps.sql,
+          ctx.sql,
           deps.producer,
           {
             name: requireString(body, 'name'),
@@ -730,20 +816,20 @@ export function buildRoutes(): Route[] {
 
     defineMutation('POST', '/v1/worlds/:id/start', 'header', async (ctx, deps) => {
       await requireAdminPrincipal(ctx, deps);
-      const world = await mustFindWorld(deps, ctx.params['id']);
+      const world = await mustFindWorld(ctx.sql, ctx.params['id']);
       const { result, replayed } = await idempotently(
         ctx,
         deps,
         'POST /v1/worlds/:id/start',
         { worldId: world.id },
-        () => startWorld(deps.sql, deps.producer, world.id, nowOf(deps), withOutbox),
+        () => startWorld(ctx.sql, deps.producer, world.id, nowOf(deps), withOutbox),
       );
       return { status: 200, body: { world: result, replayed } };
     }),
 
     defineMutation('PUT', '/v1/worlds/:id/bots', 'header', async (ctx, deps) => {
       await requireAdminPrincipal(ctx, deps);
-      const world = await mustFindWorld(deps, ctx.params['id']);
+      const world = await mustFindWorld(ctx.sql, ctx.params['id']);
       const body = await readJson(ctx.req);
       const enabled = body['enabled'] === true;
       const count = typeof body['count'] === 'number' ? body['count'] : 0;
@@ -752,7 +838,7 @@ export function buildRoutes(): Route[] {
         deps,
         'PUT /v1/worlds/:id/bots',
         { worldId: world.id, enabled, count },
-        () => syncBots(deps.sql, deps.producer, world.id, enabled, count, withOutbox),
+        () => syncBots(ctx.sql, deps.producer, world.id, enabled, count, withOutbox),
       );
       return { status: 200, body: { ...result, replayed } };
     }),
@@ -767,7 +853,7 @@ export function buildRoutes(): Route[] {
      */
     defineMutation('POST', '/v1/worlds/:id/tick', 'header', async (ctx, deps) => {
       await requireAdminPrincipal(ctx, deps);
-      const world = await mustFindWorld(deps, ctx.params['id']);
+      const world = await mustFindWorld(ctx.sql, ctx.params['id']);
       if (world.status !== 'active') throw new ConflictError(`world is ${world.status}`);
       const { replayed } = await idempotently(
         ctx,
@@ -790,7 +876,7 @@ export function buildRoutes(): Route[] {
     defineMutation('POST', '/v1/worlds/:id/join', 'header', async (ctx, deps) => {
       const principal = await authenticate(ctx, deps);
       const userId = subjectOf(ctx, principal);
-      const world = await mustFindWorld(deps, ctx.params['id']);
+      const world = await mustFindWorld(ctx.sql, ctx.params['id']);
       const handle = handleOf(principal, userId);
       const { result, replayed } = await idempotently(
         ctx,
@@ -799,7 +885,7 @@ export function buildRoutes(): Route[] {
         { worldId: world.id, userId },
         () =>
           joinWorld(
-            deps.sql,
+            ctx.sql,
             deps.producer,
             { worldId: world.id, userId, handle, correlationId: ctx.requestId },
             withOutbox,
@@ -813,7 +899,7 @@ export function buildRoutes(): Route[] {
 
     defineMutation('PUT', '/v1/worlds/:id/actions', 'header', async (ctx, deps) => {
       const userId = await requireUser(ctx, deps);
-      const world = await mustFindWorld(deps, ctx.params['id']);
+      const world = await mustFindWorld(ctx.sql, ctx.params['id']);
       const body = await readJson(ctx.req);
       const actions = parseActions(body['actions']);
       const { result, replayed } = await idempotently(
@@ -823,7 +909,7 @@ export function buildRoutes(): Route[] {
         { worldId: world.id, userId, actions },
         () =>
           queueActions(
-            deps.sql,
+            ctx.sql,
             deps.producer,
             { worldId: world.id, userId, actions, correlationId: ctx.requestId },
             withOutbox,
@@ -834,8 +920,8 @@ export function buildRoutes(): Route[] {
 
     defineMutation('POST', '/v1/worlds/:id/skills', 'header', async (ctx, deps) => {
       const userId = await requireUser(ctx, deps);
-      const world = await mustFindWorld(deps, ctx.params['id']);
-      const me = await mustBeSettled(deps, world.id, userId);
+      const world = await mustFindWorld(ctx.sql, ctx.params['id']);
+      const me = await mustBeSettled(ctx.sql, world.id, userId);
       const body = await readJson(ctx.req);
       const perkId = requireString(body, 'perkId');
       const { result, replayed } = await idempotently(
@@ -845,7 +931,7 @@ export function buildRoutes(): Route[] {
         { worldId: world.id, playerId: me.id, perkId },
         () =>
           unlockPerk(
-            deps.sql,
+            ctx.sql,
             deps.producer,
             { worldId: world.id, playerId: me.id, perkId, correlationId: ctx.requestId },
             withOutbox,
@@ -856,8 +942,8 @@ export function buildRoutes(): Route[] {
 
     defineMutation('POST', '/v1/worlds/:id/objectives/:oid/claim', 'header', async (ctx, deps) => {
       const userId = await requireUser(ctx, deps);
-      const world = await mustFindWorld(deps, ctx.params['id']);
-      const me = await mustBeSettled(deps, world.id, userId);
+      const world = await mustFindWorld(ctx.sql, ctx.params['id']);
+      const me = await mustBeSettled(ctx.sql, world.id, userId);
       const objectiveId = ctx.params['oid'] ?? '';
       const { result, replayed } = await idempotently(
         ctx,
@@ -866,7 +952,7 @@ export function buildRoutes(): Route[] {
         { worldId: world.id, playerId: me.id, objectiveId },
         () =>
           claimObjective(
-            deps.sql,
+            ctx.sql,
             deps.producer,
             { worldId: world.id, playerId: me.id, objectiveId, correlationId: ctx.requestId },
             withOutbox,
@@ -886,8 +972,8 @@ export function buildRoutes(): Route[] {
 
     defineMutation('PUT', '/v1/worlds/:id/cosmetics', 'header', async (ctx, deps) => {
       const userId = await requireUser(ctx, deps);
-      const world = await mustFindWorld(deps, ctx.params['id']);
-      const me = await mustBeSettled(deps, world.id, userId);
+      const world = await mustFindWorld(ctx.sql, ctx.params['id']);
+      const me = await mustBeSettled(ctx.sql, world.id, userId);
       const body = await readJson(ctx.req);
       const slot = requireString(body, 'slot');
       const itemUrn =
@@ -900,7 +986,7 @@ export function buildRoutes(): Route[] {
         { worldId: world.id, playerId: me.id, slot, itemUrn },
         () =>
           equipCosmetic(
-            deps.sql,
+            ctx.sql,
             deps.producer,
             deps.billing,
             { worldId: world.id, playerId: me.id, slot, itemUrn, correlationId: ctx.requestId },
@@ -914,8 +1000,8 @@ export function buildRoutes(): Route[] {
 
     defineMutation('POST', '/v1/worlds/:id/communes', 'header', async (ctx, deps) => {
       const userId = await requireUser(ctx, deps);
-      const world = await mustFindWorld(deps, ctx.params['id']);
-      const me = await mustBeSettled(deps, world.id, userId);
+      const world = await mustFindWorld(ctx.sql, ctx.params['id']);
+      const me = await mustBeSettled(ctx.sql, world.id, userId);
       const body = await readJson(ctx.req);
       const name = requireString(body, 'name');
       const { result, replayed } = await idempotently(
@@ -925,7 +1011,7 @@ export function buildRoutes(): Route[] {
         { worldId: world.id, playerId: me.id, name },
         () =>
           foundCommune(
-            deps.sql,
+            ctx.sql,
             deps.producer,
             { worldId: world.id, playerId: me.id, name, correlationId: ctx.requestId },
             withOutbox,
@@ -943,7 +1029,7 @@ export function buildRoutes(): Route[] {
         { worldId: world.id, playerId: me.id, communeId },
         () =>
           joinCommune(
-            deps.sql,
+            ctx.sql,
             deps.producer,
             { worldId: world.id, playerId: me.id, communeId, correlationId: ctx.requestId },
             withOutbox,
@@ -963,7 +1049,7 @@ export function buildRoutes(): Route[] {
         { worldId: world.id, playerId: me.id, communeId, resources },
         () =>
           depositToCommune(
-            deps.sql,
+            ctx.sql,
             deps.producer,
             { worldId: world.id, playerId: me.id, communeId, resources, correlationId: ctx.requestId },
             withOutbox,
@@ -983,7 +1069,7 @@ export function buildRoutes(): Route[] {
         { worldId: world.id, playerId: me.id, communeId, resources },
         () =>
           withdrawFromCommune(
-            deps.sql,
+            ctx.sql,
             deps.producer,
             {
               worldId: world.id,
@@ -1008,7 +1094,7 @@ export function buildRoutes(): Route[] {
         { worldId: world.id, playerId: me.id, communeId },
         () =>
           leaveCommune(
-            deps.sql,
+            ctx.sql,
             deps.producer,
             { worldId: world.id, playerId: me.id, communeId, correlationId: ctx.requestId },
             withOutbox,
@@ -1070,20 +1156,20 @@ function handleOf(principal: Principal, fallback: string): string {
   return `settler-${fallback.slice(0, 8)}`;
 }
 
-async function mustFindWorld(deps: ServerDeps, id: string | undefined): Promise<
+async function mustFindWorld(sql: Db, id: string | undefined): Promise<
   Awaited<ReturnType<typeof findWorld>> & object
 > {
-  const world = id ? await findWorld(deps.sql, id) : null;
+  const world = id ? await findWorld(sql, id) : null;
   if (!world) throw new NotFoundError('no such world');
   return world;
 }
 
 async function mustBeSettled(
-  deps: ServerDeps,
+  sql: Db,
   worldId: string,
   userId: string,
 ): Promise<Awaited<ReturnType<typeof playerOf>> & object> {
-  const me = await playerOf(deps.sql, worldId, userId);
+  const me = await playerOf(sql, worldId, userId);
   if (!me) throw new NotFoundError('you have not settled in this world');
   return me;
 }
@@ -1097,8 +1183,8 @@ async function communeContext(
   communeId: string;
 }> {
   const userId = await requireUser(ctx, deps);
-  const world = await mustFindWorld(deps, ctx.params['id']);
-  const me = await mustBeSettled(deps, world.id, userId);
+  const world = await mustFindWorld(ctx.sql, ctx.params['id']);
+  const me = await mustBeSettled(ctx.sql, world.id, userId);
   return { world, me, communeId: ctx.params['cid'] ?? '' };
 }
 
